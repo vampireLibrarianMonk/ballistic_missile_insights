@@ -1,0 +1,244 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "last_updated": "2026-01-22",
+    "source": "2020 Ballistic and Cruise Missile Threat Report",
+    "notes": [
+      "Class assignment follows standard thresholds: CRBM <= 300 km, SRBM 301-1000 km, MRBM 1001-3000 km, IRBM 3001-5500 km, ICBM > 5500 km",
+      "SLBM (Submarine-Launched Ballistic Missile) classification is independent of range",
+      "Ranges with '+' qualifier indicate minimum confirmed range; actual range may be higher",
+      "Null range_km indicates system exists but range is not publicly confirmed"
+    ]
+  },
+  "range_classifications": {
+    "CRBM": { "name": "Close-Range Ballistic Missile", "min_km": 0, "max_km": 300 },
+    "SRBM": { "name": "Short-Range Ballistic Missile", "min_km": 301, "max_km": 1000 },
+    "MRBM": { "name": "Medium-Range Ballistic Missile", "min_km": 1001, "max_km": 3000 },
+    "IRBM": { "name": "Intermediate-Range Ballistic Missile", "min_km": 3001, "max_km": 5500 },
+    "ICBM": { "name": "Intercontinental Ballistic Missile", "min_km": 5501, "max_km": null },
+    "SLBM": { "name": "Submarine-Launched Ballistic Missile", "min_km": null, "max_km": null }
+  },
+  "countries": {
+    "BRA": {
+      "name": "Brazil",
+      "systems": [
+        { "name": "SS-150", "range_km": 150, "classification": "CRBM" }
+      ]
+    },
+    "CHN": {
+      "name": "China",
+      "systems": [
+        { "name": "WS-22", "range_km": 40, "classification": "CRBM" },
+        { "name": "BRE7 / Fire Dragon 40", "range_km": 40, "classification": "CRBM" },
+        { "name": "GR1 / King Dragon 60", "range_km": 70, "classification": "CRBM" },
+        { "name": "BRC-3", "range_km": 70, "classification": "CRBM" },
+        { "name": "A100-111", "range_km": 80, "classification": "CRBM" },
+        { "name": "A100-311", "range_km": 120, "classification": "CRBM" },
+        { "name": "WS-64", "range_km": 280, "classification": "CRBM" },
+        { "name": "BRC-4", "range_km": 130, "classification": "CRBM" },
+        { "name": "BRE-2", "range_km": 150, "classification": "CRBM" },
+        { "name": "BRE-3 / Fire Dragon 140", "range_km": 150, "classification": "CRBM" },
+        { "name": "BP-12A", "range_km": 280, "classification": "CRBM" },
+        { "name": "B611", "range_km": 150, "classification": "CRBM" },
+        { "name": "M20", "range_km": 280, "classification": "CRBM" },
+        { "name": "WS-2", "range_km": 200, "classification": "CRBM", "variants": ["HE", "TBX", "DPICM"] },
+        { "name": "WS-3", "range_km": 200, "classification": "CRBM" },
+        { "name": "A300", "range_km": 280, "classification": "CRBM" },
+        { "name": "B611M", "range_km": 260, "classification": "CRBM" },
+        { "name": "BRE-8 / Fire Dragon 280", "range_km": 280, "classification": "CRBM" },
+        { "name": "CSS-6 Mod 1", "range_km": 600, "classification": "SRBM" },
+        { "name": "CSS-6 Mod 2", "range_km": 850, "classification": "SRBM", "range_note": "850+ km" },
+        { "name": "CSS-6 Mod 3", "range_km": 725, "classification": "SRBM", "range_note": "725+ km" },
+        { "name": "CSS-7 Mod 1", "range_km": 300, "classification": "CRBM" },
+        { "name": "CSS-7 Mod 2", "range_km": 600, "classification": "SRBM" },
+        { "name": "CSS-11 Mod 1", "range_km": 700, "classification": "SRBM", "range_note": "700+ km" },
+        { "name": "CSS-11 Mod 2", "range_km": 700, "classification": "SRBM", "range_note": "700+ km" },
+        { "name": "CSS-5 Mod 2 (DF-21)", "range_km": 1750, "classification": "MRBM", "range_note": "1,750+ km" },
+        { "name": "CSS-5 Mod 4 (DF-21D)", "range_km": 1500, "classification": "MRBM", "range_note": "1,500+ km" },
+        { "name": "CSS-5 Mod 5 (DF-21E)", "range_km": 1500, "classification": "MRBM", "range_note": "1,500+ km" },
+        { "name": "CSS-18 (DF-26)", "range_km": 4000, "classification": "IRBM", "range_note": "4,000+ km" },
+        { "name": "CSS-22 (DF-17)", "range_km": 2000, "classification": "MRBM", "range_note": "HGV carrier" },
+        { "name": "CSS-3 (DF-4)", "range_km": 5500, "classification": "IRBM", "range_note": "5,500+ km" },
+        { "name": "CSS-4 Mod 2 (DF-5A)", "range_km": 12000, "classification": "ICBM", "range_note": "12,000+ km" },
+        { "name": "CSS-4 Mod 3 (DF-5B)", "range_km": 12000, "classification": "ICBM", "range_note": "12,000+ km" },
+        { "name": "CSS-10 Mod 1 (DF-31)", "range_km": 7000, "classification": "ICBM", "range_note": "7,000+ km" },
+        { "name": "CSS-10 Mod 2 (DF-31A)", "range_km": 11000, "classification": "ICBM", "range_note": "11,000+ km" },
+        { "name": "DF-31AG", "range_km": 11000, "classification": "ICBM", "range_note": "Est. 11,000+ km" },
+        { "name": "CSS-20 (DF-41)", "range_km": 15000, "classification": "ICBM", "range_note": "Est. 15,000+ km" },
+        { "name": "CSS-N-14 (JL-2)", "range_km": 7000, "classification": "SLBM", "range_note": "7,000+ km" },
+        { "name": "JL-3", "range_km": 10000, "classification": "SLBM", "range_note": "10,000+ km" }
+      ]
+    },
+    "IND": {
+      "name": "India",
+      "systems": [
+        { "name": "Pinaka-II Guided", "range_km": 65, "classification": "CRBM" },
+        { "name": "Prithvi I", "range_km": 150, "classification": "CRBM" },
+        { "name": "Prahar", "range_km": 150, "classification": "CRBM" },
+        { "name": "Prithvi II", "range_km": 250, "classification": "CRBM" },
+        { "name": "Agni I", "range_km": 700, "classification": "SRBM" },
+        { "name": "Agni II", "range_km": 2000, "classification": "MRBM", "range_note": "2,000+ km" },
+        { "name": "Agni III", "range_km": 3200, "classification": "IRBM", "range_note": "3,200+ km" },
+        { "name": "Agni IV", "range_km": 3500, "classification": "IRBM", "range_note": "3,500+ km" },
+        { "name": "Agni V", "range_km": 5000, "classification": "IRBM", "range_note": "5,000+ km" },
+        { "name": "K-15 Sagarika", "range_km": 700, "classification": "SLBM" },
+        { "name": "K-4", "range_km": 3500, "classification": "SLBM" },
+        { "name": "Dhanush", "range_km": 400, "classification": "SLBM" }
+      ]
+    },
+    "IRN": {
+      "name": "Iran",
+      "systems": [
+        { "name": "Fadjr-5 Aero", "range_km": 75, "classification": "CRBM", "range_note": ">75 km" },
+        { "name": "CSS-8", "range_km": 150, "classification": "CRBM" },
+        { "name": "Zelzal", "range_km": 250, "classification": "CRBM" },
+        { "name": "Fateh-110", "range_km": 300, "classification": "CRBM" },
+        { "name": "Fateh-313", "range_km": 500, "classification": "SRBM" },
+        { "name": "Shahab 1", "range_km": 300, "classification": "CRBM" },
+        { "name": "Shahab 2", "range_km": 500, "classification": "SRBM" },
+        { "name": "Qiam-1", "range_km": 750, "classification": "SRBM" },
+        { "name": "Zolfaghar", "range_km": 700, "classification": "SRBM" },
+        { "name": "Shahab 3", "range_km": 2000, "classification": "MRBM", "range_note": "Up to 2,000 km" },
+        { "name": "Emad-1", "range_km": 2000, "classification": "MRBM", "range_note": "Up to 2,000 km" },
+        { "name": "Khorramshahr", "range_km": 2000, "classification": "MRBM" },
+        { "name": "Khorramshahr-2", "range_km": 2000, "classification": "MRBM" },
+        { "name": "Sejjil (Ashura)", "range_km": 2000, "classification": "MRBM" }
+      ]
+    },
+    "ISR": {
+      "name": "Israel",
+      "systems": [
+        { "name": "Romach (Magic Spear)", "range_km": 35, "classification": "CRBM" },
+        { "name": "STRIKES", "range_km": 40, "classification": "CRBM" },
+        { "name": "ACCULAR", "range_km": 40, "classification": "CRBM" },
+        { "name": "MLRS-TCS", "range_km": 45, "classification": "CRBM" },
+        { "name": "JUMPER", "range_km": 50, "classification": "CRBM" },
+        { "name": "EXTRA", "range_km": 150, "classification": "CRBM", "variants": ["HE", "Cluster", "Penetration", "MIMS"] },
+        { "name": "Predator Hawk", "range_km": 250, "classification": "CRBM" },
+        { "name": "LORA", "range_km": 300, "classification": "CRBM" },
+        { "name": "Jericho II", "range_km": 1500, "classification": "MRBM" },
+        { "name": "Jericho III", "range_km": 4800, "classification": "IRBM" }
+      ]
+    },
+    "PRK": {
+      "name": "North Korea",
+      "systems": [
+        { "name": "Toksa (KN-02)", "range_km": 120, "classification": "CRBM" },
+        { "name": "KN-SS-9", "range_km": 200, "classification": "CRBM" },
+        { "name": "SCUD B (Hwasong-5)", "range_km": 300, "classification": "CRBM" },
+        { "name": "SCUD C (Hwasong-6)", "range_km": 500, "classification": "SRBM" },
+        { "name": "KN-23", "range_km": 690, "classification": "SRBM" },
+        { "name": "Pukguksong-2 (KN-15)", "range_km": 1000, "classification": "SRBM", "range_note": "1,000+ km" },
+        { "name": "ER SCUD (Hwasong-9)", "range_km": 1000, "classification": "SRBM" },
+        { "name": "No Dong (Hwasong-7)", "range_km": 1300, "classification": "MRBM", "range_note": "1,200-1,500 km" },
+        { "name": "Hwasong-10 (Musudan)", "range_km": 3000, "classification": "MRBM", "range_note": "3,000+ km" },
+        { "name": "Hwasong-12", "range_km": 4500, "classification": "IRBM", "range_note": "4,500+ km" },
+        { "name": "Hwasong-13 (KN-08)", "range_km": 12000, "classification": "ICBM" },
+        { "name": "Hwasong-14", "range_km": 10000, "classification": "ICBM", "range_note": "10,000+ km" },
+        { "name": "Hwasong-15", "range_km": 13000, "classification": "ICBM", "range_note": "12,000+ km" },
+        { "name": "Hwasong-17", "range_km": 15000, "classification": "ICBM", "range_note": "15,000+ km" },
+        { "name": "Pukguksong-1 (KN-11)", "range_km": 1000, "classification": "SLBM", "range_note": "1,000+ km" },
+        { "name": "Pukguksong-3 (KN-26)", "range_km": 1900, "classification": "SLBM", "range_note": "1,900+ km" }
+      ]
+    },
+    "PAK": {
+      "name": "Pakistan",
+      "systems": [
+        { "name": "Hatf-1", "range_km": 50, "classification": "CRBM" },
+        { "name": "NASR (Hatf-9)", "range_km": 60, "classification": "CRBM" },
+        { "name": "Abdali (Hatf-2)", "range_km": 200, "classification": "CRBM" },
+        { "name": "Ghaznavi (Hatf-3)", "range_km": 300, "classification": "CRBM" },
+        { "name": "Shaheen I (Hatf-4)", "range_km": 750, "classification": "SRBM" },
+        { "name": "Ghauri (Hatf-5)", "range_km": 1250, "classification": "MRBM" },
+        { "name": "Shaheen II (Hatf-6)", "range_km": 2000, "classification": "MRBM" },
+        { "name": "Shaheen III", "range_km": 2750, "classification": "MRBM" },
+        { "name": "Ababeel", "range_km": 2200, "classification": "MRBM" }
+      ]
+    },
+    "RUS": {
+      "name": "Russia",
+      "systems": [
+        { "name": "122-mm Guided", "range_km": 40, "classification": "CRBM" },
+        { "name": "SS-21 Mod 2 (Tochka)", "range_km": 70, "classification": "CRBM" },
+        { "name": "9M55 (Smerch)", "range_km": 70, "classification": "CRBM", "variants": ["F", "K", "K1", "K3", "K4", "K5", "K6", "K7", "S"] },
+        { "name": "9M55 Extended", "range_km": 90, "classification": "CRBM" },
+        { "name": "SS-21 Mod 3 (Tochka-U)", "range_km": 120, "classification": "CRBM" },
+        { "name": "9M542 (Tornado-S)", "range_km": 120, "classification": "CRBM" },
+        { "name": "SCUD B (SS-1c)", "range_km": 300, "classification": "CRBM" },
+        { "name": "SS-26 Iskander-M", "range_km": 500, "classification": "SRBM" },
+        { "name": "SS-26 Iskander-E", "range_km": 280, "classification": "CRBM" },
+        { "name": "SS-28 (RS-26 Rubezh)", "range_km": 5500, "classification": "IRBM", "range_note": "5,500+ km" },
+        { "name": "SS-18 Mod 5 (R-36M2)", "range_km": 10000, "classification": "ICBM", "range_note": "10,000+ km" },
+        { "name": "SS-19 Mod 3 (UR-100N)", "range_km": 9000, "classification": "ICBM", "range_note": "9,000+ km" },
+        { "name": "SS-19 Mod 4 (Avangard)", "range_km": 10000, "classification": "ICBM", "range_note": "HGV carrier" },
+        { "name": "SS-25 (Topol)", "range_km": 11000, "classification": "ICBM", "range_note": "11,000+ km" },
+        { "name": "SS-27 Mod 1 (Topol-M)", "range_km": 11000, "classification": "ICBM", "range_note": "11,000+ km" },
+        { "name": "SS-27 Mod 2 (Yars)", "range_km": 11000, "classification": "ICBM", "range_note": "11,000+ km" },
+        { "name": "RS-28 Sarmat", "range_km": 18000, "classification": "ICBM", "range_note": "18,000+ km" },
+        { "name": "SS-N-18 (R-29R)", "range_km": 5500, "classification": "SLBM", "range_note": "5,500+ km" },
+        { "name": "SS-N-23 Sineva", "range_km": 8000, "classification": "SLBM" },
+        { "name": "SS-N-32 Bulava", "range_km": 8000, "classification": "SLBM" }
+      ]
+    },
+    "SAU": {
+      "name": "Saudi Arabia",
+      "systems": [
+        { "name": "CSS-2 (DF-3A)", "range_km": 3000, "classification": "MRBM" },
+        { "name": "DF-21", "range_km": 2150, "classification": "MRBM", "range_note": "Unconfirmed acquisition" }
+      ]
+    },
+    "SRB": {
+      "name": "Serbia",
+      "systems": [
+        { "name": "Guided 128-mm", "range_km": 21, "classification": "CRBM" },
+        { "name": "Jerina-1", "range_km": 285, "classification": "CRBM" }
+      ]
+    },
+    "KOR": {
+      "name": "South Korea",
+      "systems": [
+        { "name": "130 mm Guided", "range_km": 36, "classification": "CRBM" },
+        { "name": "Chunmoo 239-mm", "range_km": 80, "classification": "CRBM" },
+        { "name": "Chunmoo II 400-mm", "range_km": 180, "classification": "CRBM" },
+        { "name": "Chunmoo II 600-mm", "range_km": 290, "classification": "CRBM" },
+        { "name": "Hyunmoo-2A", "range_km": 300, "classification": "CRBM" },
+        { "name": "Hyunmoo-2B", "range_km": 500, "classification": "SRBM" },
+        { "name": "Hyunmoo-2C", "range_km": 800, "classification": "SRBM" },
+        { "name": "Hyunmoo-4", "range_km": 800, "classification": "SRBM" }
+      ]
+    },
+    "SYR": {
+      "name": "Syria",
+      "systems": [
+        { "name": "SS-21 Mod 2 (Tochka)", "range_km": 70, "classification": "CRBM" },
+        { "name": "Fateh-110", "range_km": 300, "classification": "CRBM" },
+        { "name": "SCUD D", "range_km": 700, "classification": "SRBM" }
+      ]
+    },
+    "THA": {
+      "name": "Thailand",
+      "systems": [
+        { "name": "DTI-1G", "range_km": 150, "classification": "CRBM" }
+      ]
+    },
+    "TUR": {
+      "name": "Turkey",
+      "systems": [
+        { "name": "TRG-122", "range_km": 35, "classification": "CRBM" },
+        { "name": "Tiger 300-mm", "range_km": 120, "classification": "CRBM" },
+        { "name": "TRG-230", "range_km": 70, "classification": "CRBM" },
+        { "name": "Bora", "range_km": 280, "classification": "CRBM" }
+      ]
+    },
+    "USA": {
+      "name": "United States",
+      "systems": [
+        { "name": "ATACMS Block I", "range_km": 165, "classification": "CRBM" },
+        { "name": "ATACMS Block IA", "range_km": 300, "classification": "CRBM" },
+        { "name": "PrSM", "range_km": 500, "classification": "SRBM" },
+        { "name": "Minuteman III", "range_km": 13000, "classification": "ICBM" },
+        { "name": "Trident II D5", "range_km": 12000, "classification": "SLBM" }
+      ]
+    }
+  }
+}

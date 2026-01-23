@@ -1,0 +1,873 @@
+"""
+Geometry services for ORRG.
+High-level services for generating range rings and analytical outputs.
+"""
+
+import time
+from typing import Optional
+from uuid import uuid4
+
+from shapely.geometry import MultiPolygon, Point, mapping
+from shapely.geometry.base import BaseGeometry
+from shapely.ops import unary_union
+
+from typing import Callable
+
+from app.geometry.utils import (
+    create_geodesic_buffer,
+    create_geodesic_circle,
+    create_geodesic_donut,
+    find_closest_points,
+    geodesic_distance,
+    geodesic_line,
+    get_geometry_bounds,
+    get_geometry_centroid,
+    count_vertices,
+    geometry_to_geojson,
+    make_geometry_valid,
+)
+
+# Type alias for progress callback
+ProgressCallback = Optional[Callable[[float, str], None]]
+from app.models.inputs import (
+    SingleRangeRingInput,
+    MultipleRangeRingInput,
+    ReverseRangeRingInput,
+    MinimumRangeRingInput,
+    CustomPOIRangeRingInput,
+    DistanceUnit,
+    convert_to_km,
+    classify_range,
+)
+from app.models.outputs import (
+    RangeRingOutput,
+    RangeRingLayer,
+    ExportMetadata,
+    OutputType,
+    GeometryType,
+    MinimumDistanceResult,
+)
+
+
+# Color palette for range rings (from shortest to longest range)
+RANGE_COLORS = [
+    "#3366CC",  # Blue - CRBM/SRBM
+    "#33CC33",  # Green - MRBM
+    "#FFCC00",  # Yellow - IRBM
+    "#FF6600",  # Orange - Long IRBM
+    "#CC0000",  # Red - ICBM
+]
+
+
+def _get_color_for_range(range_km: float) -> str:
+    """Get a color based on range classification."""
+    if range_km < 300:
+        return RANGE_COLORS[0]
+    elif range_km < 1000:
+        return RANGE_COLORS[0]
+    elif range_km < 3000:
+        return RANGE_COLORS[1]
+    elif range_km < 5500:
+        return RANGE_COLORS[2]
+    else:
+        return RANGE_COLORS[4]
+
+
+class RangeRingService:
+    """
+    Service class for generating range ring outputs.
+    Provides methods for all five analytical tools.
+    """
+    
+    def __init__(self, data_service=None):
+        """
+        Initialize the service.
+        
+        Args:
+            data_service: Optional data service for loading country/city data
+        """
+        self._data_service = data_service
+    
+    def get_country_geometry(self, country_code: str) -> Optional[BaseGeometry]:
+        """Get the geometry for a country by ISO3 code."""
+        if self._data_service:
+            return self._data_service.get_country_geometry(country_code)
+        return None
+    
+    def get_country_name(self, country_code: str) -> str:
+        """Get the name of a country by ISO3 code."""
+        if self._data_service:
+            return self._data_service.get_country_name(country_code)
+        return country_code
+    
+    def get_city_coordinates(self, city_name: str) -> Optional[tuple[float, float]]:
+        """Get coordinates for a city by name."""
+        if self._data_service:
+            return self._data_service.get_city_coordinates(city_name)
+        return None
+
+
+def generate_single_range_ring(
+    input_data: SingleRangeRingInput,
+    origin_geometry: Optional[BaseGeometry] = None,
+    origin_name: str = "Origin",
+    progress_callback: ProgressCallback = None,
+) -> RangeRingOutput:
+    """
+    Generate a single range ring from a point or country boundary.
+    
+    Args:
+        input_data: Input parameters for the range ring
+        origin_geometry: Optional Shapely geometry for the origin (country boundary)
+        origin_name: Name of the origin for display
+        progress_callback: Optional callback for progress updates (progress: float 0-1, status: str)
+        
+    Returns:
+        RangeRingOutput containing the generated range ring
+    """
+    def report_progress(pct: float, status: str):
+        if progress_callback:
+            progress_callback(pct, status)
+    
+    start_time = time.time()
+    report_progress(0.0, "Starting range ring generation...")
+    
+    # Convert range to kilometers
+    range_km = convert_to_km(input_data.range_value, input_data.range_unit)
+    report_progress(0.05, f"Range: {range_km:.0f} km")
+    
+    # Get the range classification
+    range_class = classify_range(range_km)
+    
+    # Determine origin point
+    if input_data.origin_point:
+        center_lat = input_data.origin_point.latitude
+        center_lon = input_data.origin_point.longitude
+        origin_name = input_data.origin_point.name
+        
+        report_progress(0.1, "Creating geodesic circle from point...")
+        # Create circle from point
+        ring_geometry = create_geodesic_circle(
+            center_lat, center_lon, range_km,
+            num_points=360 if input_data.resolution == "high" else 180
+        )
+        report_progress(0.8, "Circle geometry created")
+    elif origin_geometry:
+        report_progress(0.1, "Buffering country boundary...")
+        # Buffer the country geometry with progress callback
+        ring_geometry = create_geodesic_buffer(
+            origin_geometry, range_km, input_data.resolution,
+            progress_callback=lambda p, s: report_progress(0.1 + p * 0.6, s)
+        )
+        center_lat, center_lon = get_geometry_centroid(origin_geometry)
+        
+        report_progress(0.75, "Cutting ring at country border...")
+        # Subtract the origin country geometry so ring only shows area BEYOND the border
+        try:
+            origin_valid = make_geometry_valid(origin_geometry)
+            ring_geometry = ring_geometry.difference(origin_valid)
+        except Exception as e:
+            print(f"Could not subtract country geometry: {e}")
+    else:
+        raise ValueError("Either origin_point or origin_geometry must be provided")
+    
+    # Make geometry valid if needed
+    ring_geometry = make_geometry_valid(ring_geometry)
+    
+    # Get bounds
+    bounds = get_geometry_bounds(ring_geometry)
+    
+    # Create layer - use weapon system name if provided
+    if input_data.weapon_system:
+        layer_name = input_data.weapon_system
+        if range_class:
+            layer_name = f"{layer_name} ({range_class.value})"
+    else:
+        layer_name = f"{range_km:.0f} km Range"
+        if range_class:
+            layer_name = f"{layer_name} ({range_class.value})"
+    
+    layer = RangeRingLayer(
+        name=layer_name,
+        geometry_type=GeometryType.POLYGON if ring_geometry.geom_type == "Polygon" else GeometryType.MULTI_POLYGON,
+        geometry_geojson=geometry_to_geojson(ring_geometry),
+        fill_color=_get_color_for_range(range_km),
+        stroke_color=_get_color_for_range(range_km),
+        fill_opacity=0.2,
+        stroke_width=2.0,
+        range_km=range_km,
+        label=f"{input_data.range_value:,.0f} {input_data.range_unit.value}",
+    )
+    
+    # Calculate processing time
+    processing_time = (time.time() - start_time) * 1000
+    
+    # Create metadata
+    metadata = ExportMetadata(
+        tool_type=OutputType.SINGLE_RANGE_RING,
+        point_count=1 if input_data.origin_point else None,
+        vertex_count=count_vertices(ring_geometry),
+        processing_time_ms=processing_time,
+        resolution=input_data.resolution,
+        geodesic_method="geographiclib",
+        range_km=range_km,
+        range_classification=range_class.value if range_class else None,
+        origin_name=origin_name,
+        origin_type=input_data.origin_type.value,
+    )
+    
+    # Create title
+    title = input_data.weapon_system or "Range Ring"
+    if range_class:
+        title = f"{title} {range_class.value}"
+    
+    return RangeRingOutput(
+        output_type=OutputType.SINGLE_RANGE_RING,
+        title=title,
+        subtitle=origin_name,
+        description=f"Range: {input_data.range_value:,.0f} {input_data.range_unit.value}",
+        layers=[layer],
+        center_latitude=center_lat,
+        center_longitude=center_lon,
+        bbox=bounds,
+        metadata=metadata,
+    )
+
+
+def generate_multiple_range_rings(
+    input_data: MultipleRangeRingInput,
+    origin_geometry: Optional[BaseGeometry] = None,
+    origin_name: str = "Origin",
+) -> RangeRingOutput:
+    """
+    Generate multiple concentric range rings.
+    
+    Args:
+        input_data: Input parameters including multiple ranges
+        origin_geometry: Optional Shapely geometry for the origin
+        origin_name: Name of the origin
+        
+    Returns:
+        RangeRingOutput containing multiple layers
+    """
+    start_time = time.time()
+    
+    layers = []
+    all_geometries = []
+    
+    # Determine center point
+    if input_data.origin_point:
+        center_lat = input_data.origin_point.latitude
+        center_lon = input_data.origin_point.longitude
+        origin_name = input_data.origin_point.name
+    elif origin_geometry:
+        center_lat, center_lon = get_geometry_centroid(origin_geometry)
+    else:
+        raise ValueError("Either origin_point or origin_geometry must be provided")
+    
+    # Sort ranges from largest to smallest (for proper layering)
+    sorted_ranges = sorted(
+        input_data.ranges,
+        key=lambda r: convert_to_km(r[0], r[1]),
+        reverse=True
+    )
+    
+    # Make origin geometry valid for subtraction
+    origin_valid = None
+    if origin_geometry:
+        origin_valid = make_geometry_valid(origin_geometry)
+    
+    for range_value, range_unit, label in sorted_ranges:
+        range_km = convert_to_km(range_value, range_unit)
+        range_class = classify_range(range_km)
+        
+        # Generate ring geometry
+        if input_data.origin_point:
+            ring_geometry = create_geodesic_circle(
+                center_lat, center_lon, range_km,
+                num_points=180 if input_data.resolution == "normal" else 72
+            )
+        elif origin_geometry:
+            ring_geometry = create_geodesic_buffer(
+                origin_geometry, range_km, input_data.resolution
+            )
+            # Subtract the origin country geometry so ring only shows area BEYOND the border
+            try:
+                ring_geometry = ring_geometry.difference(origin_valid)
+            except Exception as e:
+                print(f"Could not subtract country geometry: {e}")
+        
+        ring_geometry = make_geometry_valid(ring_geometry)
+        all_geometries.append(ring_geometry)
+        
+        # Create layer
+        layer_name = label or f"{range_km:.0f} km"
+        
+        layer = RangeRingLayer(
+            name=layer_name,
+            geometry_type=GeometryType.POLYGON if ring_geometry.geom_type == "Polygon" else GeometryType.MULTI_POLYGON,
+            geometry_geojson=geometry_to_geojson(ring_geometry),
+            fill_color=_get_color_for_range(range_km),
+            stroke_color=_get_color_for_range(range_km),
+            fill_opacity=0.15,
+            stroke_width=2.0,
+            range_km=range_km,
+            label=f"{range_value:,.0f} {range_unit.value}",
+        )
+        layers.append(layer)
+    
+    # Get combined bounds
+    combined = unary_union(all_geometries)
+    bounds = get_geometry_bounds(combined)
+    
+    # Calculate processing time
+    processing_time = (time.time() - start_time) * 1000
+    
+    # Create metadata
+    metadata = ExportMetadata(
+        tool_type=OutputType.MULTIPLE_RANGE_RING,
+        ring_count=len(layers),
+        vertex_count=sum(count_vertices(g) for g in all_geometries),
+        processing_time_ms=processing_time,
+        resolution=input_data.resolution,
+        geodesic_method="geographiclib",
+        origin_name=origin_name,
+        origin_type=input_data.origin_type.value,
+    )
+    
+    return RangeRingOutput(
+        output_type=OutputType.MULTIPLE_RANGE_RING,
+        title="Multiple Range Rings",
+        subtitle=origin_name,
+        description=f"{len(layers)} range rings",
+        layers=layers,
+        center_latitude=center_lat,
+        center_longitude=center_lon,
+        bbox=bounds,
+        metadata=metadata,
+    )
+
+
+def generate_reverse_range_ring(
+    input_data: ReverseRangeRingInput,
+    threat_country_geometry: Optional[BaseGeometry] = None,
+    threat_country_name: Optional[str] = None,
+) -> RangeRingOutput:
+    """
+    Generate a reverse range ring showing potential launch areas within a threat country.
+    
+    This identifies the portion of the shooter country that is within weapon range of the target.
+    
+    The process (matching original ArcGIS implementation):
+    1. Creates a geodesic buffer (circle) around the TARGET point using the weapon range
+    2. Clips (intersects) that buffer with the SHOOTER COUNTRY boundary
+    3. The result shows the areas within the shooter country from which the target can be reached
+    
+    Args:
+        input_data: Input parameters including target point and range
+        threat_country_geometry: Geometry of the shooter/threat country
+        threat_country_name: Name of the shooter/threat country
+        
+    Returns:
+        RangeRingOutput showing potential launch areas within the shooter country
+    """
+    start_time = time.time()
+    
+    target_lat = input_data.target_point.latitude
+    target_lon = input_data.target_point.longitude
+    range_km = convert_to_km(input_data.range_value, input_data.range_unit)
+    range_class = classify_range(range_km)
+    
+    layers = []
+    
+    # Step 1: Create geodesic buffer around the TARGET (reach envelope)
+    reach_envelope = create_geodesic_circle(
+        target_lat, target_lon, range_km,
+        num_points=360 if input_data.resolution == "high" else 180
+    )
+    reach_envelope = make_geometry_valid(reach_envelope)
+    
+    if threat_country_geometry is not None:
+        # Make shooter country geometry valid
+        shooter_geom = make_geometry_valid(threat_country_geometry)
+        
+        # First, calculate the minimum and maximum distances from the shooter country to the target
+        # This helps us determine if we need intersection at all
+        from app.geometry.utils import _extract_all_coordinates
+        shooter_coords = _extract_all_coordinates(shooter_geom)
+        
+        min_dist_to_target = float('inf')
+        max_dist_to_target = 0
+        
+        for lon, lat in shooter_coords[:2000]:  # Sample up to 2000 points
+            dist = geodesic_distance(lat, lon, target_lat, target_lon)
+            if dist < min_dist_to_target:
+                min_dist_to_target = dist
+            if dist > max_dist_to_target:
+                max_dist_to_target = dist
+        
+        # If the ENTIRE shooter country is within range (max distance < range),
+        # then the launch region IS the shooter country
+        if max_dist_to_target <= range_km:
+            # All of shooter country is within range
+            launch_region = shooter_geom
+            description = f"All of {threat_country_name} can reach {input_data.target_point.name}"
+        elif min_dist_to_target <= range_km:
+            # Part of shooter country is within range - need intersection
+            # Fix antimeridian crossing before intersection
+            try:
+                import antimeridian
+                reach_envelope_fixed = antimeridian.fix_polygon(reach_envelope)
+                
+                # Also fix shooter geometry if needed
+                if shooter_geom.geom_type == "Polygon":
+                    shooter_geom_fixed = antimeridian.fix_polygon(shooter_geom)
+                elif shooter_geom.geom_type == "MultiPolygon":
+                    fixed_parts = []
+                    for poly in shooter_geom.geoms:
+                        fixed = antimeridian.fix_polygon(poly)
+                        if fixed.geom_type == "MultiPolygon":
+                            fixed_parts.extend(fixed.geoms)
+                        else:
+                            fixed_parts.append(fixed)
+                    shooter_geom_fixed = MultiPolygon(fixed_parts) if len(fixed_parts) > 1 else fixed_parts[0]
+                else:
+                    shooter_geom_fixed = shooter_geom
+            except Exception as e:
+                print(f"Antimeridian fix failed: {e}")
+                reach_envelope_fixed = reach_envelope
+                shooter_geom_fixed = shooter_geom
+            
+            # Try the intersection
+            launch_region = reach_envelope_fixed.intersection(shooter_geom_fixed)
+            launch_region = make_geometry_valid(launch_region)
+            
+            # If intersection fails (empty), fall back to using entire shooter country
+            # since we already verified part of it is in range
+            if launch_region.is_empty:
+                launch_region = shooter_geom
+                description = f"Launch region within {threat_country_name} (geometry simplified due to antimeridian)"
+            else:
+                description = f"Potential launch areas within {threat_country_name} that can reach {input_data.target_point.name}"
+        else:
+            # Target is out of range
+            launch_region = None
+            description = f"Target {input_data.target_point.name} is OUT OF RANGE from {threat_country_name} (minimum distance: {min_dist_to_target:,.0f} km)"
+        
+        # Check if we have a valid launch region
+        if launch_region is None or launch_region.is_empty:
+            # Verify with geodesic distance calculation
+            from app.geometry.utils import _extract_all_coordinates
+            shooter_coords = _extract_all_coordinates(shooter_geom)
+            
+            min_dist_to_target = float('inf')
+            for lon, lat in shooter_coords[:1000]:
+                dist = geodesic_distance(lat, lon, target_lat, target_lon)
+                if dist < min_dist_to_target:
+                    min_dist_to_target = dist
+            
+            if min_dist_to_target <= range_km:
+                # Target should be in range but intersection failed (likely antimeridian issue)
+                # Fall back to showing the full envelope with a message
+                description = f"Target is within range ({min_dist_to_target:,.0f} km), but geometry intersection failed. Showing full envelope."
+                launch_region = None
+            else:
+                description = f"Target {input_data.target_point.name} is OUT OF RANGE from {threat_country_name} (minimum distance: {min_dist_to_target:,.0f} km)"
+                launch_region = None
+        else:
+            description = f"Potential launch areas within {threat_country_name} that can reach {input_data.target_point.name}"
+        
+        # Create launch region layer if we have one
+        if launch_region is not None and not launch_region.is_empty:
+            layer_name = f"Launch Region for {input_data.weapon_system or 'Weapon'}"
+            
+            launch_layer = RangeRingLayer(
+                name=layer_name,
+                geometry_type=GeometryType.POLYGON if launch_region.geom_type == "Polygon" else GeometryType.MULTI_POLYGON,
+                geometry_geojson=geometry_to_geojson(launch_region, fix_antimeridian=True),
+                fill_color="#FF4444",
+                stroke_color="#CC0000",
+                fill_opacity=0.4,
+                stroke_width=2.5,
+                range_km=range_km,
+                label=f"Within {range_km:,.0f} km of target",
+            )
+            layers.append(launch_layer)
+            
+            # Get bounds from launch region
+            bounds = get_geometry_bounds(launch_region)
+        else:
+            # No intersection - show full envelope as reference
+            envelope_layer = RangeRingLayer(
+                name=f"Reach Envelope ({range_km:.0f} km)",
+                geometry_type=GeometryType.POLYGON,
+                geometry_geojson=geometry_to_geojson(reach_envelope, fix_antimeridian=True),
+                fill_color="#888888",
+                stroke_color="#666666",
+                fill_opacity=0.15,
+                stroke_width=1.5,
+                range_km=range_km,
+                label=f"Full {range_km:,.0f} km envelope",
+            )
+            layers.append(envelope_layer)
+            bounds = get_geometry_bounds(reach_envelope)
+        
+        # Calculate center - use target location
+        center_lat = target_lat
+        center_lon = target_lon
+    else:
+        # No shooter country - just show the reach envelope
+        layer_name = input_data.weapon_system or f"Reach Envelope ({range_km:.0f} km)"
+        
+        envelope_layer = RangeRingLayer(
+            name=layer_name,
+            geometry_type=GeometryType.POLYGON,
+            geometry_geojson=geometry_to_geojson(reach_envelope, fix_antimeridian=True),
+            fill_color="#FF4444",
+            stroke_color="#CC0000",
+            fill_opacity=0.2,
+            stroke_width=2.5,
+            range_km=range_km,
+            label=f"Within {range_km:,.0f} km of target",
+        )
+        layers.append(envelope_layer)
+        
+        bounds = get_geometry_bounds(reach_envelope)
+        center_lat = target_lat
+        center_lon = target_lon
+        description = f"Area within {range_km:,.0f} km of target"
+    
+    # Create target point layer
+    target_point = Point(target_lon, target_lat)
+    target_layer = RangeRingLayer(
+        name=f"Target: {input_data.target_point.name}",
+        geometry_type=GeometryType.POINT,
+        geometry_geojson=geometry_to_geojson(target_point, fix_antimeridian=False),
+        fill_color="#FFFF00",  # Yellow for visibility
+        stroke_color="#FF0000",
+        fill_opacity=1.0,
+        stroke_width=4.0,
+        label=input_data.target_point.name,
+    )
+    layers.append(target_layer)
+    
+    # Calculate processing time
+    processing_time = (time.time() - start_time) * 1000
+    
+    # Create metadata
+    metadata = ExportMetadata(
+        tool_type=OutputType.REVERSE_RANGE_RING,
+        vertex_count=count_vertices(reach_envelope),
+        processing_time_ms=processing_time,
+        resolution=input_data.resolution,
+        geodesic_method="geographiclib",
+        range_km=range_km,
+        range_classification=range_class.value if range_class else None,
+        origin_name=input_data.target_point.name,
+        origin_type="target_point",
+    )
+    
+    title = "Reverse Range Ring"
+    if input_data.weapon_system:
+        title = f"{input_data.weapon_system} Launch Envelope"
+    
+    subtitle = f"Target: {input_data.target_point.name}"
+    if threat_country_name:
+        subtitle = f"Target: {input_data.target_point.name} | Shooter: {threat_country_name}"
+    
+    return RangeRingOutput(
+        output_type=OutputType.REVERSE_RANGE_RING,
+        title=title,
+        subtitle=subtitle,
+        description=description,
+        layers=layers,
+        center_latitude=center_lat,
+        center_longitude=center_lon,
+        bbox=bounds,
+        metadata=metadata,
+    )
+
+
+def calculate_minimum_distance(
+    input_data: MinimumRangeRingInput,
+    geometry_a: BaseGeometry,
+    geometry_b: BaseGeometry,
+    country_a_name: str = "Country A",
+    country_b_name: str = "Country B",
+    weapon_systems: Optional[list[dict]] = None,
+) -> tuple[RangeRingOutput, MinimumDistanceResult]:
+    """
+    Calculate the minimum distance between two countries.
+    
+    Args:
+        input_data: Input parameters
+        geometry_a: Geometry of first country
+        geometry_b: Geometry of second country
+        country_a_name: Name of first country
+        country_b_name: Name of second country
+        weapon_systems: Optional list of weapon system dicts with 'name' and 'range_km'
+        
+    Returns:
+        Tuple of (RangeRingOutput, MinimumDistanceResult)
+    """
+    start_time = time.time()
+    
+    # Find closest points
+    point_a, point_b, distance_km = find_closest_points(geometry_a, geometry_b)
+    
+    layers = []
+    
+    # Create minimum distance line
+    if input_data.show_minimum_line:
+        line = geodesic_line(
+            point_a[0], point_a[1],
+            point_b[0], point_b[1],
+            num_points=100
+        )
+        
+        line_layer = RangeRingLayer(
+            name=f"Minimum Distance: {distance_km:,.1f} km",
+            geometry_type=GeometryType.LINE_STRING,
+            geometry_geojson=geometry_to_geojson(line),
+            fill_color=None,
+            stroke_color="#FF0000",
+            fill_opacity=0,
+            stroke_width=3.0,
+            range_km=distance_km,
+            label=f"{distance_km:,.1f} km",
+        )
+        layers.append(line_layer)
+    
+    # Create point markers
+    point_a_geom = Point(point_a[1], point_a[0])
+    point_b_geom = Point(point_b[1], point_b[0])
+    
+    point_a_layer = RangeRingLayer(
+        name=f"Closest point on {country_a_name}",
+        geometry_type=GeometryType.POINT,
+        geometry_geojson=geometry_to_geojson(point_a_geom),
+        fill_color="#3366CC",
+        stroke_color="#000066",
+        fill_opacity=1.0,
+        stroke_width=2.0,
+    )
+    
+    point_b_layer = RangeRingLayer(
+        name=f"Closest point on {country_b_name}",
+        geometry_type=GeometryType.POINT,
+        geometry_geojson=geometry_to_geojson(point_b_geom),
+        fill_color="#CC3366",
+        stroke_color="#660033",
+        fill_opacity=1.0,
+        stroke_width=2.0,
+    )
+    
+    layers.extend([point_a_layer, point_b_layer])
+    
+    # Weapon system range rings
+    if input_data.show_buffer_rings and weapon_systems:
+        # Make country A geometry valid for clipping
+        geometry_a_valid = make_geometry_valid(geometry_a)
+        
+        # Sort weapons by range (largest first for proper layering)
+        sorted_weapons = sorted(weapon_systems, key=lambda w: w["range_km"], reverse=True)
+        
+        for weapon in sorted_weapons:
+            weapon_name = weapon["name"]
+            weapon_range = weapon["range_km"]
+            range_class = classify_range(weapon_range)
+            
+            # Create geodesic buffer
+            buffer_geom = create_geodesic_buffer(geometry_a, weapon_range, "low")
+            buffer_geom = make_geometry_valid(buffer_geom)
+            
+            # Clip to country A's border (show only area beyond the border)
+            try:
+                buffer_geom = buffer_geom.difference(geometry_a_valid)
+                buffer_geom = make_geometry_valid(buffer_geom)
+            except Exception as e:
+                print(f"Could not clip buffer for {weapon_name}: {e}")
+            
+            # Create layer name with weapon system and classification
+            layer_name = weapon_name
+            if range_class:
+                layer_name = f"{weapon_name} ({range_class.value})"
+            
+            buffer_layer = RangeRingLayer(
+                name=layer_name,
+                geometry_type=GeometryType.POLYGON if buffer_geom.geom_type == "Polygon" else GeometryType.MULTI_POLYGON,
+                geometry_geojson=geometry_to_geojson(buffer_geom),
+                fill_color=_get_color_for_range(weapon_range),
+                stroke_color=_get_color_for_range(weapon_range),
+                fill_opacity=0.15,
+                stroke_width=1.5,
+                range_km=weapon_range,
+            )
+            layers.append(buffer_layer)
+    
+    # Calculate center and bounds
+    combined = unary_union([geometry_a, geometry_b])
+    bounds = get_geometry_bounds(combined)
+    center_lat = (point_a[0] + point_b[0]) / 2
+    center_lon = (point_a[1] + point_b[1]) / 2
+    
+    # Calculate processing time
+    processing_time = (time.time() - start_time) * 1000
+    
+    # Create metadata
+    metadata = ExportMetadata(
+        tool_type=OutputType.MINIMUM_RANGE_RING,
+        processing_time_ms=processing_time,
+        geodesic_method="geographiclib",
+        range_km=distance_km,
+    )
+    
+    output = RangeRingOutput(
+        output_type=OutputType.MINIMUM_RANGE_RING,
+        title="Minimum Distance Analysis",
+        subtitle=f"{country_a_name} to {country_b_name}",
+        description=f"Minimum geodesic distance: {distance_km:,.1f} km",
+        layers=layers,
+        center_latitude=center_lat,
+        center_longitude=center_lon,
+        bbox=bounds,
+        metadata=metadata,
+    )
+    
+    result = MinimumDistanceResult(
+        country_a_code=input_data.country_code_a,
+        country_b_code=input_data.country_code_b,
+        country_a_name=country_a_name,
+        country_b_name=country_b_name,
+        distance_km=distance_km,
+        point_a_lat=point_a[0],
+        point_a_lon=point_a[1],
+        point_b_lat=point_b[0],
+        point_b_lon=point_b[1],
+    )
+    
+    return output, result
+
+
+def generate_custom_poi_range_ring(
+    input_data: CustomPOIRangeRingInput,
+) -> RangeRingOutput:
+    """
+    Generate range rings from custom points of interest.
+    Supports donut (ring with hole) for min/max ranges.
+    
+    Args:
+        input_data: Input parameters including POIs and ranges
+        
+    Returns:
+        RangeRingOutput containing the generated range ring(s)
+    """
+    start_time = time.time()
+    
+    # Convert ranges to kilometers
+    max_range_km = convert_to_km(input_data.max_range_value, input_data.range_unit)
+    min_range_km = convert_to_km(input_data.min_range_value, input_data.range_unit) if input_data.min_range_value else 0
+    
+    range_class = classify_range(max_range_km)
+    
+    layers = []
+    all_geometries = []
+    
+    # Generate rings for each POI
+    for poi in input_data.points_of_interest:
+        if min_range_km > 0:
+            # Create donut
+            ring_geometry = create_geodesic_donut(
+                poi.latitude, poi.longitude,
+                min_range_km, max_range_km,
+                num_points=360 if input_data.resolution == "high" else 180
+            )
+        else:
+            # Create solid circle
+            ring_geometry = create_geodesic_circle(
+                poi.latitude, poi.longitude, max_range_km,
+                num_points=360 if input_data.resolution == "high" else 180
+            )
+        
+        ring_geometry = make_geometry_valid(ring_geometry)
+        all_geometries.append(ring_geometry)
+        
+        # Create layer for this POI
+        layer_name = f"{poi.name}"
+        if min_range_km > 0:
+            layer_name = f"{layer_name} ({min_range_km:.0f}-{max_range_km:.0f} km)"
+        else:
+            layer_name = f"{layer_name} ({max_range_km:.0f} km)"
+        
+        layer = RangeRingLayer(
+            name=layer_name,
+            geometry_type=GeometryType.POLYGON,
+            geometry_geojson=geometry_to_geojson(ring_geometry),
+            fill_color=_get_color_for_range(max_range_km),
+            stroke_color=_get_color_for_range(max_range_km),
+            fill_opacity=0.2,
+            stroke_width=2.0,
+            range_km=max_range_km,
+            label=f"{input_data.max_range_value:,.0f} {input_data.range_unit.value}",
+        )
+        layers.append(layer)
+        
+        # Add POI marker
+        poi_point = Point(poi.longitude, poi.latitude)
+        poi_layer = RangeRingLayer(
+            name=poi.name,
+            geometry_type=GeometryType.POINT,
+            geometry_geojson=geometry_to_geojson(poi_point),
+            fill_color="#000000",
+            stroke_color="#FFFFFF",
+            fill_opacity=1.0,
+            stroke_width=2.0,
+            label=poi.name,
+        )
+        layers.append(poi_layer)
+    
+    # Calculate center and bounds
+    if len(input_data.points_of_interest) == 1:
+        center_lat = input_data.points_of_interest[0].latitude
+        center_lon = input_data.points_of_interest[0].longitude
+    else:
+        # Use centroid of all POIs
+        center_lat = sum(p.latitude for p in input_data.points_of_interest) / len(input_data.points_of_interest)
+        center_lon = sum(p.longitude for p in input_data.points_of_interest) / len(input_data.points_of_interest)
+    
+    combined = unary_union(all_geometries)
+    bounds = get_geometry_bounds(combined)
+    
+    # Calculate processing time
+    processing_time = (time.time() - start_time) * 1000
+    
+    # Create metadata
+    metadata = ExportMetadata(
+        tool_type=OutputType.CUSTOM_POI_RANGE_RING,
+        point_count=len(input_data.points_of_interest),
+        vertex_count=sum(count_vertices(g) for g in all_geometries),
+        processing_time_ms=processing_time,
+        resolution=input_data.resolution,
+        geodesic_method="geographiclib",
+        range_km=max_range_km,
+        range_classification=range_class.value if range_class else None,
+    )
+    
+    # Create title
+    title = input_data.weapon_system or "Custom POI Range Ring"
+    if min_range_km > 0:
+        description = f"Range: {input_data.min_range_value:,.0f} - {input_data.max_range_value:,.0f} {input_data.range_unit.value}"
+    else:
+        description = f"Range: {input_data.max_range_value:,.0f} {input_data.range_unit.value}"
+    
+    return RangeRingOutput(
+        output_type=OutputType.CUSTOM_POI_RANGE_RING,
+        title=title,
+        subtitle=f"{len(input_data.points_of_interest)} POI(s)",
+        description=description,
+        layers=layers,
+        center_latitude=center_lat,
+        center_longitude=center_lon,
+        bbox=bounds,
+        metadata=metadata,
+    )
