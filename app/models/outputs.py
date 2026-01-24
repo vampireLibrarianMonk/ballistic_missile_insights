@@ -57,6 +57,10 @@ class ExportMetadata(BaseModel):
     # Origin information
     origin_name: Optional[str] = Field(None, description="Name of origin (country, city, or POI)")
     origin_type: Optional[str] = Field(None, description="Type of origin")
+    
+    # Weapon system information
+    weapon_name: Optional[str] = Field(None, description="Name of weapon system")
+    weapon_source: Optional[str] = Field(None, description="Source of weapon system data (e.g., '2020 Ballistic and Cruise Missile Threat Report')")
 
 
 class RangeRingLayer(BaseModel):

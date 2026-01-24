@@ -249,3 +249,11 @@ site/
 # =============================================================================
 .docker/
 docker-compose.override.yml
+
+# Archives
+*.tar
+*.zip
+*.tar.gz
+
+# ArcGis
+*.mxd

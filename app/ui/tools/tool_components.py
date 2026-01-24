@@ -32,10 +32,61 @@ from app.ui.layout.global_state import (
     get_tool_state,
     clear_tool_outputs,
 )
-from app.exports.geojson import export_to_geojson_string
-from app.exports.kmz import export_to_kmz_bytes
-from app.exports.png import export_to_png_bytes
-from app.exports.pdf import export_to_pdf_bytes
+# Lazy import exports - will be loaded on demand, not at module load
+# This makes the UI load instantly
+_export_modules_loaded = False
+_export_to_geojson_string = None
+_export_to_kmz_bytes = None
+_export_to_png_bytes = None
+_export_to_pdf_bytes = None
+
+
+def _load_export_modules():
+    """Lazy load export modules only when needed."""
+    global _export_modules_loaded
+    global _export_to_geojson_string, _export_to_kmz_bytes
+    global _export_to_png_bytes, _export_to_pdf_bytes
+    
+    if not _export_modules_loaded:
+        from app.exports.geojson import export_to_geojson_string
+        from app.exports.kmz import export_to_kmz_bytes
+        from app.exports.png import export_to_png_bytes
+        from app.exports.pdf import export_to_pdf_bytes
+        
+        _export_to_geojson_string = export_to_geojson_string
+        _export_to_kmz_bytes = export_to_kmz_bytes
+        _export_to_png_bytes = export_to_png_bytes
+        _export_to_pdf_bytes = export_to_pdf_bytes
+        _export_modules_loaded = True
+
+
+# Cached export functions to avoid recomputation on every render
+@st.cache_data(show_spinner=False)
+def _cached_geojson_export(output_id: str, _output, include_metadata: bool) -> str:
+    """Generate GeoJSON with caching."""
+    _load_export_modules()
+    return _export_to_geojson_string(_output, include_metadata=include_metadata)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_kmz_export(output_id: str, _output, include_metadata: bool) -> bytes:
+    """Generate KMZ with caching."""
+    _load_export_modules()
+    return _export_to_kmz_bytes(_output, include_metadata=include_metadata)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_png_export(output_id: str, _output) -> bytes:
+    """Generate PNG with caching."""
+    _load_export_modules()
+    return _export_to_png_bytes(_output)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_pdf_export(output_id: str, _output, include_metadata: bool) -> bytes:
+    """Generate PDF with caching."""
+    _load_export_modules()
+    return _export_to_pdf_bytes(_output, include_metadata=include_metadata)
 
 
 def render_map_with_legend(deck, output, height: int = 500) -> None:
@@ -166,50 +217,61 @@ def render_map_with_legend(deck, output, height: int = 500) -> None:
 
 
 def render_export_controls(output, tool_key: str) -> None:
-    """Render export controls for a tool output."""
-    col1, col2, col3, col4 = st.columns(4)
-    
+    """Render export controls for a tool output using cached exports."""
     include_metadata = is_analyst_mode()
+    output_id = str(output.output_id)
     
-    with col1:
-        geojson_data = export_to_geojson_string(output, include_metadata=include_metadata)
-        st.download_button(
-            "📥 GeoJSON",
-            data=geojson_data,
-            file_name=f"{tool_key}_{output.output_id}.geojson",
-            mime="application/geo+json",
-            key=f"geojson_{tool_key}_{output.output_id}",
-        )
-    
-    with col2:
-        kmz_data = export_to_kmz_bytes(output, include_metadata=include_metadata)
-        st.download_button(
-            "📥 KMZ",
-            data=kmz_data,
-            file_name=f"{tool_key}_{output.output_id}.kmz",
-            mime="application/vnd.google-earth.kmz",
-            key=f"kmz_{tool_key}_{output.output_id}",
-        )
-    
-    with col3:
-        png_data = export_to_png_bytes(output)
-        st.download_button(
-            "📥 PNG",
-            data=png_data,
-            file_name=f"{tool_key}_{output.output_id}.png",
-            mime="image/png",
-            key=f"png_{tool_key}_{output.output_id}",
-        )
-    
-    with col4:
-        pdf_data = export_to_pdf_bytes(output, include_metadata=include_metadata)
-        st.download_button(
-            "📥 PDF",
-            data=pdf_data,
-            file_name=f"{tool_key}_{output.output_id}.pdf",
-            mime="application/pdf",
-            key=f"pdf_{tool_key}_{output.output_id}",
-        )
+    # Show expander with export buttons - exports are generated on-demand and cached
+    with st.expander("📥 Download Options", expanded=False):
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            # GeoJSON is fast, generate immediately
+            with st.spinner("Preparing GeoJSON..."):
+                geojson_data = _cached_geojson_export(output_id, output, include_metadata)
+            st.download_button(
+                "📥 GeoJSON",
+                data=geojson_data,
+                file_name=f"{tool_key}_{output.output_id}.geojson",
+                mime="application/geo+json",
+                key=f"geojson_{tool_key}_{output.output_id}",
+            )
+        
+        with col2:
+            # KMZ is fast, generate immediately
+            with st.spinner("Preparing KMZ..."):
+                kmz_data = _cached_kmz_export(output_id, output, include_metadata)
+            st.download_button(
+                "📥 KMZ",
+                data=kmz_data,
+                file_name=f"{tool_key}_{output.output_id}.kmz",
+                mime="application/vnd.google-earth.kmz",
+                key=f"kmz_{tool_key}_{output.output_id}",
+            )
+        
+        with col3:
+            # PNG is slow - use status indicator
+            with st.spinner("Preparing PNG (may take a moment)..."):
+                png_data = _cached_png_export(output_id, output)
+            st.download_button(
+                "📥 PNG",
+                data=png_data,
+                file_name=f"{tool_key}_{output.output_id}.png",
+                mime="image/png",
+                key=f"png_{tool_key}_{output.output_id}",
+            )
+        
+        with col4:
+            # PDF is slow - use status indicator
+            with st.spinner("Preparing PDF (may take a moment)..."):
+                pdf_data = _cached_pdf_export(output_id, output, include_metadata)
+            st.download_button(
+                "📥 PDF",
+                data=pdf_data,
+                file_name=f"{tool_key}_{output.output_id}.pdf",
+                mime="application/pdf",
+                key=f"pdf_{tool_key}_{output.output_id}",
+            )
 
 
 def render_single_range_ring_tool() -> None:
@@ -306,12 +368,20 @@ def render_single_range_ring_tool() -> None:
             
             try:
                 if origin_type == "country" and country_code:
+                    # Get weapon source if a weapon is selected
+                    weapon_source = None
+                    if selected_weapon != "Manual Entry":
+                        weapon_info = data_service.get_weapon_info(selected_weapon, country_code)
+                        if weapon_info:
+                            weapon_source = weapon_info.get("source")
+                    
                     input_data = SingleRangeRingInput(
                         origin_type=OriginType.COUNTRY,
                         country_code=country_code,
                         range_value=range_value,
                         range_unit=DistanceUnit(range_unit),
                         weapon_system=selected_weapon if selected_weapon != "Manual Entry" else None,
+                        weapon_source=weapon_source,
                         resolution=resolution,
                     )
                     origin_geom = data_service.get_country_geometry(country_code)

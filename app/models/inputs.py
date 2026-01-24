@@ -88,6 +88,7 @@ class SingleRangeRingInput(BaseModel):
     
     # Weapon system (optional - for labeling)
     weapon_system: Optional[str] = Field(None, description="Weapon system name for labeling")
+    weapon_source: Optional[str] = Field(None, description="Source of weapon data (e.g., '2020 Ballistic and Cruise Missile Threat Report')")
     
     # Resolution
     resolution: str = Field("normal", description="Ring resolution: 'low' or 'normal'")

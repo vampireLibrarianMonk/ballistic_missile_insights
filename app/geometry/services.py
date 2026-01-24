@@ -214,6 +214,8 @@ def generate_single_range_ring(
         range_classification=range_class.value if range_class else None,
         origin_name=origin_name,
         origin_type=input_data.origin_type.value,
+        weapon_name=input_data.weapon_system,
+        weapon_source=getattr(input_data, 'weapon_source', None),
     )
     
     # Create title

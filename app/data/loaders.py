@@ -244,12 +244,14 @@ class DataService:
             name = row.get("name") or row.get("sys_name", "Unknown")
             range_km = row.get("range_km") or row.get("Max_Range", 0)
             country = row.get("country_code") or row.get("Country", "")
+            source = row.get("source", "")  # Get source from weapons.json
             
             results.append({
                 "name": name,
                 "range_km": float(range_km),
                 "country_code": country,
                 "classification": _classify_weapon_range(float(range_km)),
+                "source": source,  # Include source in weapon data
             })
         
         return results
@@ -273,6 +275,14 @@ class DataService:
         if not match.empty:
             return float(match.iloc[0][range_col])
         
+        return None
+    
+    def get_weapon_info(self, weapon_name: str, country_code: Optional[str] = None) -> Optional[dict[str, Any]]:
+        """Get full weapon info including source for a specific weapon system."""
+        weapons = self.get_weapon_systems(country_code)
+        for weapon in weapons:
+            if weapon["name"] == weapon_name:
+                return weapon
         return None
     
     def search_countries(self, query: str) -> list[str]:
@@ -302,6 +312,13 @@ def _load_weapons_from_json(json_file: Path) -> pd.DataFrame:
     with open(json_file, 'r') as f:
         data = json.load(f)
     
+    # Get the global source from the metadata section
+    metadata = data.get("metadata", {})
+    global_source = metadata.get("source", "") or data.get("source", "")
+    print(f"DEBUG LOADER - global_source from weapons.json: '{global_source}'")
+    print(f"DEBUG LOADER - top-level keys: {list(data.keys())}")
+    print(f"DEBUG LOADER - metadata keys: {list(metadata.keys()) if metadata else 'None'}")
+    
     weapons_list = []
     countries_data = data.get("countries", {})
     
@@ -318,6 +335,7 @@ def _load_weapons_from_json(json_file: Path) -> pd.DataFrame:
                 "classification": system.get("classification", ""),
                 "range_note": system.get("range_note", ""),
                 "variants": ", ".join(system.get("variants", [])) if system.get("variants") else "",
+                "source": system.get("source") or global_source,  # Use system-level or global source
             }
             # Skip weapons with no range data
             if weapon["range_km"] is not None:

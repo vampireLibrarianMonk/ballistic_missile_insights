@@ -53,12 +53,8 @@
     <!-- Source / created-by block (upper right, under classification) -->
     <g id="source_block" transform="translate(820,55)" class="header-text">
       <text id="created_by" class="meta" x="535" y="4" text-anchor="end">Created By: Mr. P</text>
-      <text id="source_line1" class="meta" x="535" y="24" text-anchor="end">
-        Source: DOD, 2015 Annual Report to Congress: China, 07 April 2015
-      </text>
-      <text id="source_line2" class="meta" x="535" y="46" text-anchor="end">
-        DoS, Simplified World Polygons, March 2013
-      </text>
+      <text id="source_line1" class="meta" x="535" y="24" text-anchor="end">Source: DOD, 2015 Annual Report to Congress: China, 07 April 2015</text>
+      <text id="source_line2" class="meta" x="535" y="46" text-anchor="end">DoS, Simplified World Polygons, March 2013</text>
     </g>
   </g>
 
@@ -96,22 +92,16 @@
   </g>
 
   <!-- ====== Lower-right coordinate system box ====== -->
-  <g id="coordinate_box_group" transform="translate(915,710)">
+  <g id="coordinate_box_group" transform="translate(1020,710)">
     <rect id="coordinate_box" x="0" y="0" width="450" height="70" class="thin-border" fill="#efefef"/>
-    <text id="coordinate_line1" x="12" y="28" class="header-text box-text">
-      Coordinate System: Eckert III (world) (Central Meridian 104.0)
-    </text>
-    <text id="coordinate_line2" x="12" y="52" class="header-text box-text">
-      Datum: D WGS 1984
-    </text>
+    <text id="coordinate_line1" x="12" y="28" class="header-text box-text">Coordinate System: Eckert III (world) (Central Meridian 104.0)</text>
+    <text id="coordinate_line2" x="12" y="52" class="header-text box-text">Datum: D WGS 1984</text>
   </g>
 
   <!-- ====== Attribution block (bottom center, small text) ====== -->
   <g id="attribution_group" transform="translate(520,790)">
     <rect id="attribution_box" x="0" y="0" width="850" height="40" class="thin-border" fill="#f6f6f6"/>
-    <text id="attribution_text" x="12" y="26" class="header-text small muted">
-      Sources: Esri, HERE, DeLorme, Intermap, increment P Corp, GEBCO, USGS, FAO, NPS, NRCan, ...
-    </text>
+    <text id="attribution_text" x="12" y="26" class="header-text small muted">Sources: Esri, HERE, DeLorme, Intermap, increment P Corp, GEBCO, USGS, FAO, NPS, NRCan, ...</text>
   </g>
 
   <!-- ====== Bottom-left classification banner ====== -->
