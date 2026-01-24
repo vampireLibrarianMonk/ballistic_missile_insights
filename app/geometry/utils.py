@@ -4,10 +4,8 @@ Provides geodesic calculations using pyproj and geographiclib.
 All calculations are true geodesic on the WGS84 ellipsoid.
 """
 
-import math
 from typing import Optional, Callable
 
-import numpy as np
 from geographiclib.geodesic import Geodesic
 from pyproj import Geod
 from shapely.geometry import (
@@ -25,6 +23,33 @@ from shapely.ops import unary_union
 WGS84 = Geodesic.WGS84
 GEOD = Geod(ellps="WGS84")
 
+# -----------------------------------------------------------------------------
+# Global constants
+# -----------------------------------------------------------------------------
+
+# Approximate Earth radius in kilometers (WGS84 mean radius)
+EARTH_RADIUS_KM = 6371.0088
+
+# World polygon in WGS84 (used for near-global / antipodal logic)
+WORLD_POLYGON_WGS84 = Polygon([
+    (-180.0, -90.0),
+    (-180.0,  90.0),
+    ( 180.0,  90.0),
+    ( 180.0, -90.0),
+    (-180.0, -90.0),
+])
+
+
+def antipode(lat: float, lon: float) -> tuple[float, float]:
+    """
+    Compute the antipodal point on the WGS84 ellipsoid.
+    Longitude is normalized to (-180, 180].
+    """
+    anti_lat = -lat
+    anti_lon = (lon + 180.0) % 360.0
+    if anti_lon > 180.0:
+        anti_lon -= 360.0
+    return anti_lat, anti_lon
 
 def geodesic_distance(
     lat1: float, lon1: float, lat2: float, lon2: float
@@ -100,7 +125,9 @@ def create_geodesic_circle(
         if lon_diff > 180:
             crosses_antimeridian = True
             break
-    
+
+    # NOTE: This normalization is only safe for non-antipodal radii.
+    # Large (>~90° arc) buffers must use antipodal exclusion logic.
     if crosses_antimeridian:
         # Normalize longitudes to avoid wrapping issues
         # Shift everything to be relative to center longitude
@@ -130,8 +157,13 @@ def create_geodesic_buffer(
     """
     Create a geodesic buffer around any Shapely geometry.
     
-    Uses an Azimuthal Equidistant projection centered on the geometry's centroid
-    to perform an accurate geodesic buffer, then transforms back to WGS84.
+    For Points: Creates a single geodesic circle.
+    For Polygons/LineStrings with small/medium ranges (<5500 km): 
+        Samples points along the boundary and creates geodesic circles from each,
+        then unions them together. This ensures the buffer extends from the actual
+        boundary, not just the centroid.
+    For large ranges (>5500 km): Uses antipodal exclusion strategy which is more
+        numerically stable for global-scale buffers.
     
     Args:
         geometry: Input Shapely geometry (Point, LineString, Polygon, etc.)
@@ -143,8 +175,6 @@ def create_geodesic_buffer(
     Returns:
         Buffered Shapely geometry
     """
-    from pyproj import CRS, Transformer
-    
     def report_progress(pct: float, status: str):
         if progress_callback:
             progress_callback(pct, status)
@@ -159,50 +189,220 @@ def create_geodesic_buffer(
         report_progress(1.0, "Complete")
         return result
     
-    report_progress(0.1, "Computing geometry centroid...")
+    # -----------------------------------------------------------------------------
+    # For very large ranges (>5500 km), use antipodal exclusion strategy
+    # This is more numerically stable than unioning hundreds of near-global circles
+    # -----------------------------------------------------------------------------
     
-    # Get the centroid for the projection center
-    centroid = geometry.centroid
-    center_lon, center_lat = centroid.x, centroid.y
+    HEMISPHERIC_THRESHOLD_KM = 5500.0
+
+    if distance_km > HEMISPHERIC_THRESHOLD_KM:
+        result = _create_hemispheric_buffer_from_polygon(
+            geometry, distance_km, resolution, progress_callback
+        )
+
+        # ------------------------------------------------------------
+        # CRITICAL FIX: remove origin geometry from final buffer
+        # ------------------------------------------------------------
+        try:
+            result = result.difference(geometry)
+        except Exception:
+            pass
+
+        return result
+
+    # -----------------------------------------------------------------------------
+    # For smaller ranges: Sample boundary points and union circles
+    # This ensures the buffer extends from the actual boundary, not just centroid
+    # -----------------------------------------------------------------------------
     
-    report_progress(0.2, "Setting up projection...")
+    report_progress(0.1, "Extracting boundary coordinates...")
     
-    # Create an Azimuthal Equidistant projection centered on the geometry
-    # This projection preserves distances from the center point
-    aeqd_crs = CRS.from_proj4(
-        f"+proj=aeqd +lat_0={center_lat} +lon_0={center_lon} +x_0=0 +y_0=0 +datum=WGS84 +units=m"
-    )
-    wgs84_crs = CRS.from_epsg(4326)
+    # Get all boundary coordinates
+    boundary_coords = _extract_all_coordinates(geometry)
     
-    # Create transformers
-    to_aeqd = Transformer.from_crs(wgs84_crs, aeqd_crs, always_xy=True)
-    to_wgs84 = Transformer.from_crs(aeqd_crs, wgs84_crs, always_xy=True)
+    # Determine sampling density based on resolution
+    if resolution == "high":
+        max_samples = 200
+        circle_points = 180
+    elif resolution == "normal":
+        max_samples = 100
+        circle_points = 120
+    else:  # low
+        max_samples = 50
+        circle_points = 72
     
-    report_progress(0.3, "Projecting geometry...")
+    # Sample boundary points uniformly
+    if len(boundary_coords) > max_samples:
+        step = max(1, len(boundary_coords) // max_samples)
+        sampled_coords = boundary_coords[::step]
+    else:
+        sampled_coords = boundary_coords
     
-    # Transform geometry to projected CRS
-    projected_geom = _transform_geometry(geometry, to_aeqd)
+    # Ensure we have at least the corner points
+    if len(sampled_coords) < 4:
+        sampled_coords = boundary_coords[:max_samples] if len(boundary_coords) > max_samples else boundary_coords
     
-    report_progress(0.5, "Applying buffer...")
+    report_progress(0.2, f"Creating geodesic circles from {len(sampled_coords)} boundary points...")
     
-    # Buffer in meters
-    distance_m = distance_km * 1000
+    # Create geodesic circles from each boundary point
+    circles = []
+    total_coords = len(sampled_coords)
     
-    # Apply buffer with appropriate resolution
-    buffer_resolution = {"low": 8, "normal": 16, "high": 32}.get(resolution, 16)
-    buffered_projected = projected_geom.buffer(distance_m, resolution=buffer_resolution)
+    for i, (lon, lat) in enumerate(sampled_coords):
+        try:
+            circle = create_geodesic_circle(lat, lon, distance_km, circle_points)
+            if circle.is_valid and not circle.is_empty:
+                circles.append(circle)
+        except Exception as e:
+            # Skip invalid points
+            continue
+        
+        # Report progress periodically
+        if i % max(1, total_coords // 10) == 0:
+            pct = 0.2 + 0.5 * (i / total_coords)
+            report_progress(pct, f"Circle {i+1}/{total_coords}...")
     
-    report_progress(0.7, "Transforming back to WGS84...")
+    if not circles:
+        # Fallback to centroid-based circle if no boundary circles could be created
+        centroid = geometry.centroid
+        report_progress(0.8, "Fallback to centroid circle...")
+        result = create_geodesic_circle(centroid.y, centroid.x, distance_km, circle_points)
+        report_progress(1.0, "Complete")
+        return result
     
-    # Transform back to WGS84
-    result = _transform_geometry(buffered_projected, to_wgs84)
-    
-    report_progress(0.9, "Validating geometry...")
-    
-    # Ensure valid geometry
+    report_progress(0.75, f"Merging {len(circles)} circles...")
+
+    # Union all circles together
+    result = unary_union(circles)
+
+    # Fix antimeridian FIRST
+    result = fix_antimeridian_crossing(result)
+
     if not result.is_valid:
         result = result.buffer(0)
+
+    # ------------------------------------------------------------
+    # CRITICAL: subtract origin geometry LAST
+    # ------------------------------------------------------------
+    try:
+        result = result.difference(geometry)
+    except Exception:
+        pass
+
+    report_progress(1.0, "Complete")
+
+    return result
+
+
+def _create_hemispheric_buffer_from_polygon(
+    geometry: BaseGeometry,
+    distance_km: float,
+    resolution: str = "normal",
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+) -> BaseGeometry:
+    """
+    Create a hemispheric/global buffer for large ranges (>5500 km) using
+    antipodal exclusion strategy.
     
+    For very large ranges, the "out of range" area is a small region at
+    the farthest points from the polygon. We compute this by:
+    1. Finding the centroid's antipode
+    2. Computing the "out of range" radius
+    3. Subtracting that hole from the world polygon
+    
+    For polygon inputs, we sample boundary points to find the farthest
+    antipode and use that to define the exclusion area.
+    
+    Args:
+        geometry: Input polygon geometry
+        distance_km: Buffer distance in kilometers
+        resolution: Resolution setting
+        progress_callback: Optional progress callback
+        
+    Returns:
+        Buffered geometry covering most of the world
+    """
+    def report_progress(pct: float, status: str):
+        if progress_callback:
+            progress_callback(pct, status)
+    
+    report_progress(0.1, f"Hemispheric buffer ({distance_km:.0f} km) - computing antipodal exclusion...")
+    
+    # Get boundary coordinates to find farthest points from antipode
+    boundary_coords = _extract_all_coordinates(geometry)
+    
+    # Sample if too many
+    if len(boundary_coords) > 100:
+        step = max(1, len(boundary_coords) // 100)
+        boundary_coords = boundary_coords[::step]
+    
+    # Find the centroid and its antipode
+    centroid = geometry.centroid
+    center_lat, center_lon = centroid.y, centroid.x
+    anti_lat, anti_lon = antipode(center_lat, center_lon)
+    
+    report_progress(0.3, "Computing out-of-range exclusion zone...")
+
+    # Half Earth circumference (antipodal distance)
+    half_circumference_km = EARTH_RADIUS_KM * 3.141592653589793  # ~20,015 km
+
+    # If range equals/exceeds antipodal distance, entire globe is reachable
+    if distance_km >= half_circumference_km:
+        return WORLD_POLYGON_WGS84
+
+    # Primary antipodal exclusion radius dictated by geometry of the sphere
+    # (points farther than distance_km from the origin)
+    primary_hole_radius = half_circumference_km - distance_km
+
+    # Tighten the exclusion using the closest boundary point to the antipode
+    min_dist_to_antipode = float('inf')
+    for lon, lat in boundary_coords:
+        d = geodesic_distance(lat, lon, anti_lat, anti_lon)
+        if d < min_dist_to_antipode:
+            min_dist_to_antipode = d
+
+    # A point is out of range only if it is farther than distance_km from ALL boundary points
+    # Therefore the exclusion radius cannot exceed (min_dist_to_antipode - distance_km)
+    boundary_limited_radius = max(0.0, min_dist_to_antipode - distance_km)
+
+    # Final hole radius: never larger than primary antipodal cap, never negative
+    hole_radius = max(
+        50.0,  # numerical stability floor
+        min(primary_hole_radius, boundary_limited_radius)
+    )
+
+    report_progress(0.5, f"Creating exclusion hole ({hole_radius:.0f} km) at antipode...")
+    
+    # Create the exclusion hole at the antipode
+    num_points = {
+        "low": 240,
+        "normal": 480,
+        "high": 960,
+    }.get(resolution, 480)
+
+    hole = create_geodesic_circle(anti_lat, anti_lon, hole_radius, num_points)
+
+    report_progress(0.7, "Subtracting from world polygon...")
+
+    # Subtract antipodal hole from world polygon
+    result = WORLD_POLYGON_WGS84.difference(hole)
+
+    # Fix antimeridian FIRST
+    result = fix_antimeridian_crossing(result)
+
+    if not result.is_valid:
+        result = result.buffer(0)
+
+    # ------------------------------------------------------------
+    # CRITICAL: subtract origin geometry LAST
+    # (must happen AFTER antimeridian fixing)
+    # ------------------------------------------------------------
+    try:
+        result = result.difference(geometry)
+    except Exception:
+        pass
+
     report_progress(1.0, "Complete")
     return result
 
@@ -450,9 +650,9 @@ def geometry_to_geojson(geometry: BaseGeometry, fix_antimeridian: bool = True) -
     Returns:
         GeoJSON geometry dict
     """
-    if fix_antimeridian and geometry.geom_type in ("Polygon", "MultiPolygon"):
+    if geometry.geom_type in ("Polygon", "MultiPolygon"):
         geometry = fix_antimeridian_crossing(geometry)
-    
+
     return mapping(geometry)
 
 
@@ -461,6 +661,7 @@ def fix_antimeridian_crossing(geometry: BaseGeometry) -> BaseGeometry:
     Fix geometries that cross the antimeridian (180° longitude).
     
     Uses the 'antimeridian' package to properly split polygons at the 180° line.
+    Preserves interior rings (holes) through the process.
     
     Args:
         geometry: Input geometry
@@ -474,14 +675,43 @@ def fix_antimeridian_crossing(geometry: BaseGeometry) -> BaseGeometry:
         if geometry.is_empty:
             return geometry
         
-        # Use the antimeridian package's fix_polygon function
+        # Check if the geometry actually needs antimeridian fixing
+        # by looking at the coordinate range
+        coords = _extract_all_coordinates(geometry)
+        if coords:
+            lons = [c[0] for c in coords]
+            min_lon, max_lon = min(lons), max(lons)
+            
+            # If all coordinates are within a reasonable range and don't span
+            # across the antimeridian, don't fix (preserves holes better)
+            if min_lon > -170 and max_lon < 170:
+                # Doesn't cross antimeridian, return as-is to preserve holes
+                return geometry
+            if max_lon - min_lon < 180:
+                # Coordinates don't wrap around, return as-is
+                return geometry
+        
+        # Need to fix antimeridian crossing
         if geometry.geom_type == "Polygon":
-            fixed = antimeridian.fix_polygon(geometry)
+            # Preserve interior rings (holes) through the fix
+            original_interiors = list(geometry.interiors)
+            fixed = antimeridian.fix_polygon(geometry, fix_winding=False)
+            
+            # If we had interior rings and lost them, try to restore
+            if original_interiors and fixed.geom_type == "Polygon" and not list(fixed.interiors):
+                # Interior rings were lost - try to add them back
+                try:
+                    for interior in original_interiors:
+                        hole_poly = Polygon(interior)
+                        fixed = fixed.difference(hole_poly)
+                except Exception:
+                    pass
+            
             return fixed
         elif geometry.geom_type == "MultiPolygon":
             fixed_parts = []
             for poly in geometry.geoms:
-                fixed = antimeridian.fix_polygon(poly)
+                fixed = fix_antimeridian_crossing(poly)
                 if fixed.geom_type == "MultiPolygon":
                     fixed_parts.extend(fixed.geoms)
                 else:

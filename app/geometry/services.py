@@ -163,11 +163,76 @@ def generate_single_range_ring(
         
         report_progress(0.75, "Cutting ring at country border...")
         # Subtract the origin country geometry so ring only shows area BEYOND the border
+        # The country should appear as a hole (unshaded area) within the range ring
         try:
             origin_valid = make_geometry_valid(origin_geometry)
+            
+            # Debug: Print geometry info before subtraction
+            print(f"DEBUG: Ring geometry type BEFORE subtraction: {ring_geometry.geom_type}")
+            print(f"DEBUG: Ring has {len(list(ring_geometry.interiors)) if ring_geometry.geom_type == 'Polygon' else 'N/A'} interior rings before")
+            print(f"DEBUG: Origin geometry type: {origin_valid.geom_type}")
+            print(f"DEBUG: Origin geometry area: {origin_valid.area:.2f}")
+            
+            ring_before = ring_geometry
+            
+            # Use shapely's difference to create the hole
             ring_geometry = ring_geometry.difference(origin_valid)
+            
+            # Debug: Print geometry info after subtraction
+            print(f"DEBUG: Ring geometry type AFTER subtraction: {ring_geometry.geom_type}")
+            if ring_geometry.geom_type == "Polygon":
+                print(f"DEBUG: Ring has {len(list(ring_geometry.interiors))} interior rings after")
+            elif ring_geometry.geom_type == "MultiPolygon":
+                for i, poly in enumerate(ring_geometry.geoms):
+                    print(f"DEBUG: MultiPolygon part {i} has {len(list(poly.interiors))} interior rings")
+            
+            # Validate the result
+            if ring_geometry.is_empty:
+                print(f"Warning: Subtraction resulted in empty geometry, using original")
+                ring_geometry = ring_before
+            elif not ring_geometry.is_valid:
+                print(f"DEBUG: Geometry invalid after subtraction, fixing...")
+                ring_geometry = make_geometry_valid(ring_geometry)
+            
+            # Check if subtraction worked by comparing areas
+            area_before = ring_before.area
+            area_after = ring_geometry.area
+            print(f"DEBUG: Area before: {area_before:.2f}, Area after: {area_after:.2f}")
+            
+            if abs(area_before - area_after) < 0.01:  # Areas essentially identical
+                print(f"Warning: Country subtraction may have failed - areas nearly identical")
+                print(f"DEBUG: Trying alternative subtraction approach...")
+                
+                # Alternative approach: explicitly create a polygon with the country as a hole
+                from shapely.geometry import Polygon, MultiPolygon
+                
+                if ring_before.geom_type == "Polygon":
+                    # Get the exterior of the ring
+                    exterior_coords = list(ring_before.exterior.coords)
+                    # Get existing interior rings (holes)
+                    existing_holes = [list(interior.coords) for interior in ring_before.interiors]
+                    # Add the country boundary as another hole
+                    if origin_valid.geom_type == "Polygon":
+                        country_hole = list(origin_valid.exterior.coords)
+                        existing_holes.append(country_hole)
+                    elif origin_valid.geom_type == "MultiPolygon":
+                        for poly in origin_valid.geoms:
+                            country_hole = list(poly.exterior.coords)
+                            existing_holes.append(country_hole)
+                    
+                    # Create new polygon with country as hole
+                    try:
+                        ring_geometry = Polygon(exterior_coords, holes=existing_holes)
+                        ring_geometry = make_geometry_valid(ring_geometry)
+                        print(f"DEBUG: Created polygon with explicit holes. Interior count: {len(list(ring_geometry.interiors))}")
+                    except Exception as e:
+                        print(f"DEBUG: Explicit hole creation failed: {e}")
+                        ring_geometry = ring_before
+                        
         except Exception as e:
             print(f"Could not subtract country geometry: {e}")
+            import traceback
+            traceback.print_exc()
     else:
         raise ValueError("Either origin_point or origin_geometry must be provided")
     
