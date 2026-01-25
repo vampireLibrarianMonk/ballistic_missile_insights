@@ -473,6 +473,7 @@ def generate_reverse_range_ring(
     input_data: ReverseRangeRingInput,
     threat_country_geometry: Optional[BaseGeometry] = None,
     threat_country_name: Optional[str] = None,
+    progress_callback: ProgressCallback = None,
 ) -> RangeRingOutput:
     """
     Generate a reverse range ring showing potential launch areas within a threat country.
@@ -488,58 +489,89 @@ def generate_reverse_range_ring(
         input_data: Input parameters including target point and range
         threat_country_geometry: Geometry of the shooter/threat country
         threat_country_name: Name of the shooter/threat country
+        progress_callback: Optional callback for progress updates (progress: float 0-1, status: str)
         
     Returns:
         RangeRingOutput showing potential launch areas within the shooter country
     """
-    start_time = time.time()
+    def report_progress(pct: float, status: str):
+        if progress_callback:
+            progress_callback(pct, status)
     
+    start_time = time.time()
+    report_progress(0.0, "Initializing reverse range ring analysis...")
+    
+    report_progress(0.02, "Loading target coordinates...")
     target_lat = input_data.target_point.latitude
     target_lon = input_data.target_point.longitude
+    
+    report_progress(0.05, "Converting range to kilometers...")
     range_km = convert_to_km(input_data.range_value, input_data.range_unit)
     range_class = classify_range(range_km)
+    report_progress(0.08, f"Weapon range: {range_km:,.0f} km ({range_class.value if range_class else 'Unknown'})")
     
     layers = []
     
     # Step 1: Create geodesic buffer around the TARGET (reach envelope)
+    report_progress(0.10, f"Creating reach envelope around target ({range_km:,.0f} km radius)...")
     reach_envelope = create_geodesic_circle(
         target_lat, target_lon, range_km,
         num_points=360 if input_data.resolution == "high" else 180
     )
+    report_progress(0.18, "Validating reach envelope geometry...")
     reach_envelope = make_geometry_valid(reach_envelope)
+    report_progress(0.20, "Reach envelope created successfully")
     
     if threat_country_geometry is not None:
         # Make shooter country geometry valid
+        report_progress(0.22, f"Loading shooter country geometry ({threat_country_name})...")
         shooter_geom = make_geometry_valid(threat_country_geometry)
+        report_progress(0.25, "Shooter country geometry validated")
         
         # First, calculate the minimum and maximum distances from the shooter country to the target
         # This helps us determine if we need intersection at all
+        report_progress(0.28, "Extracting shooter country boundary coordinates...")
         from app.geometry.utils import _extract_all_coordinates
         shooter_coords = _extract_all_coordinates(shooter_geom)
         
+        report_progress(0.32, f"Calculating distances from {len(shooter_coords[:2000])} boundary points to target...")
         min_dist_to_target = float('inf')
         max_dist_to_target = 0
         
-        for lon, lat in shooter_coords[:2000]:  # Sample up to 2000 points
+        sample_count = min(2000, len(shooter_coords))
+        for i, (lon, lat) in enumerate(shooter_coords[:2000]):
             dist = geodesic_distance(lat, lon, target_lat, target_lon)
             if dist < min_dist_to_target:
                 min_dist_to_target = dist
             if dist > max_dist_to_target:
                 max_dist_to_target = dist
+            
+            # Progress update every 500 points
+            if i % 500 == 0:
+                pct = 0.32 + 0.15 * (i / sample_count)
+                report_progress(pct, f"Measuring distances: {i}/{sample_count} points...")
+        
+        report_progress(0.48, f"Distance analysis complete: {min_dist_to_target:,.0f} km (min) to {max_dist_to_target:,.0f} km (max)")
         
         # If the ENTIRE shooter country is within range (max distance < range),
         # then the launch region IS the shooter country
         if max_dist_to_target <= range_km:
+            report_progress(0.50, f"All of {threat_country_name} is within {range_km:,.0f} km range")
             # All of shooter country is within range
             launch_region = shooter_geom
             description = f"All of {threat_country_name} can reach {input_data.target_point.name}"
+            report_progress(0.55, "Using entire shooter country as launch region")
         elif min_dist_to_target <= range_km:
+            report_progress(0.50, f"Partial coverage: {min_dist_to_target:,.0f} km to {max_dist_to_target:,.0f} km")
+            report_progress(0.52, "Computing intersection of reach envelope with shooter country...")
             # Part of shooter country is within range - need intersection
             # Fix antimeridian crossing before intersection
             try:
+                report_progress(0.54, "Fixing antimeridian crossing for reach envelope...")
                 import antimeridian
                 reach_envelope_fixed = antimeridian.fix_polygon(reach_envelope)
                 
+                report_progress(0.56, "Fixing antimeridian crossing for shooter country...")
                 # Also fix shooter geometry if needed
                 if shooter_geom.geom_type == "Polygon":
                     shooter_geom_fixed = antimeridian.fix_polygon(shooter_geom)
@@ -560,24 +592,31 @@ def generate_reverse_range_ring(
                 shooter_geom_fixed = shooter_geom
             
             # Try the intersection
+            report_progress(0.60, "Computing geometry intersection...")
             launch_region = reach_envelope_fixed.intersection(shooter_geom_fixed)
+            report_progress(0.65, "Validating intersection result...")
             launch_region = make_geometry_valid(launch_region)
             
             # If intersection fails (empty), fall back to using entire shooter country
             # since we already verified part of it is in range
             if launch_region.is_empty:
+                report_progress(0.68, "Intersection empty - using simplified geometry")
                 launch_region = shooter_geom
                 description = f"Launch region within {threat_country_name} (geometry simplified due to antimeridian)"
             else:
+                report_progress(0.68, "Intersection computed successfully")
                 description = f"Potential launch areas within {threat_country_name} that can reach {input_data.target_point.name}"
         else:
             # Target is out of range
+            report_progress(0.50, f"Target OUT OF RANGE (minimum distance: {min_dist_to_target:,.0f} km)")
             launch_region = None
             description = f"Target {input_data.target_point.name} is OUT OF RANGE from {threat_country_name} (minimum distance: {min_dist_to_target:,.0f} km)"
         
         # Check if we have a valid launch region
+        report_progress(0.70, "Validating launch region...")
         if launch_region is None or launch_region.is_empty:
             # Verify with geodesic distance calculation
+            report_progress(0.72, "Re-verifying distances for validation...")
             from app.geometry.utils import _extract_all_coordinates
             shooter_coords = _extract_all_coordinates(shooter_geom)
             
@@ -590,16 +629,21 @@ def generate_reverse_range_ring(
             if min_dist_to_target <= range_km:
                 # Target should be in range but intersection failed (likely antimeridian issue)
                 # Fall back to showing the full envelope with a message
+                report_progress(0.75, "Intersection failed but target in range - showing full envelope")
                 description = f"Target is within range ({min_dist_to_target:,.0f} km), but geometry intersection failed. Showing full envelope."
                 launch_region = None
             else:
+                report_progress(0.75, "Confirmed: target is out of range")
                 description = f"Target {input_data.target_point.name} is OUT OF RANGE from {threat_country_name} (minimum distance: {min_dist_to_target:,.0f} km)"
                 launch_region = None
         else:
+            report_progress(0.75, "Launch region validated successfully")
             description = f"Potential launch areas within {threat_country_name} that can reach {input_data.target_point.name}"
         
         # Create launch region layer if we have one
+        report_progress(0.78, "Creating output layers...")
         if launch_region is not None and not launch_region.is_empty:
+            report_progress(0.80, "Building launch region layer...")
             layer_name = f"Launch Region for {input_data.weapon_system or 'Weapon'}"
             
             launch_layer = RangeRingLayer(
@@ -659,6 +703,7 @@ def generate_reverse_range_ring(
         description = f"Area within {range_km:,.0f} km of target"
     
     # Create target point layer
+    report_progress(0.85, "Adding target marker layer...")
     target_point = Point(target_lon, target_lat)
     target_layer = RangeRingLayer(
         name=f"Target: {input_data.target_point.name}",
@@ -673,9 +718,11 @@ def generate_reverse_range_ring(
     layers.append(target_layer)
     
     # Calculate processing time
+    report_progress(0.90, "Computing processing statistics...")
     processing_time = (time.time() - start_time) * 1000
     
     # Create metadata
+    report_progress(0.93, "Building export metadata...")
     metadata = ExportMetadata(
         tool_type=OutputType.REVERSE_RANGE_RING,
         vertex_count=count_vertices(reach_envelope),
@@ -688,6 +735,7 @@ def generate_reverse_range_ring(
         origin_type="target_point",
     )
     
+    report_progress(0.96, "Creating output object...")
     title = "Reverse Range Ring"
     if input_data.weapon_system:
         title = f"{input_data.weapon_system} Launch Envelope"
@@ -696,6 +744,7 @@ def generate_reverse_range_ring(
     if threat_country_name:
         subtitle = f"Target: {input_data.target_point.name} | Shooter: {threat_country_name}"
     
+    report_progress(1.0, "Complete!")
     return RangeRingOutput(
         output_type=OutputType.REVERSE_RANGE_RING,
         title=title,
@@ -713,32 +762,44 @@ def calculate_minimum_distance(
     input_data: MinimumRangeRingInput,
     geometry_a: BaseGeometry,
     geometry_b: BaseGeometry,
-    country_a_name: str = "Country A",
-    country_b_name: str = "Country B",
-    weapon_systems: Optional[list[dict]] = None,
+    location_a_name: str = "Location A",
+    location_b_name: str = "Location B",
+    progress_callback: ProgressCallback = None,
 ) -> tuple[RangeRingOutput, MinimumDistanceResult]:
     """
-    Calculate the minimum distance between two countries.
+    Calculate the minimum distance between two locations (countries or cities).
     
     Args:
         input_data: Input parameters
-        geometry_a: Geometry of first country
-        geometry_b: Geometry of second country
-        country_a_name: Name of first country
-        country_b_name: Name of second country
-        weapon_systems: Optional list of weapon system dicts with 'name' and 'range_km'
+        geometry_a: Geometry of first location (country polygon or city point)
+        geometry_b: Geometry of second location (country polygon or city point)
+        location_a_name: Name of first location
+        location_b_name: Name of second location
+        progress_callback: Optional callback for progress updates (progress: float 0-1, status: str)
         
     Returns:
         Tuple of (RangeRingOutput, MinimumDistanceResult)
     """
+    def report_progress(pct: float, status: str):
+        if progress_callback:
+            progress_callback(pct, status)
+    
     start_time = time.time()
+    report_progress(0.0, "Initializing minimum distance calculation...")
+    
+    report_progress(0.05, f"Loading geometry for {location_a_name}...")
+    report_progress(0.10, f"Loading geometry for {location_b_name}...")
     
     # Find closest points
+    report_progress(0.15, "Sampling boundary coordinates...")
+    report_progress(0.25, "Computing geodesic distances between all point pairs...")
     point_a, point_b, distance_km = find_closest_points(geometry_a, geometry_b)
+    report_progress(0.50, f"Minimum distance found: {distance_km:,.1f} km")
     
     layers = []
     
     # Create minimum distance line
+    report_progress(0.55, "Creating geodesic line between closest points...")
     if input_data.show_minimum_line:
         line = geodesic_line(
             point_a[0], point_a[1],
@@ -758,13 +819,15 @@ def calculate_minimum_distance(
             label=f"{distance_km:,.1f} km",
         )
         layers.append(line_layer)
+    report_progress(0.65, "Geodesic line created")
     
     # Create point markers
+    report_progress(0.70, f"Creating marker for closest point on {location_a_name}...")
     point_a_geom = Point(point_a[1], point_a[0])
     point_b_geom = Point(point_b[1], point_b[0])
     
     point_a_layer = RangeRingLayer(
-        name=f"Closest point on {country_a_name}",
+        name=f"Closest point on {location_a_name}",
         geometry_type=GeometryType.POINT,
         geometry_geojson=geometry_to_geojson(point_a_geom),
         fill_color="#3366CC",
@@ -773,8 +836,9 @@ def calculate_minimum_distance(
         stroke_width=2.0,
     )
     
+    report_progress(0.75, f"Creating marker for closest point on {location_b_name}...")
     point_b_layer = RangeRingLayer(
-        name=f"Closest point on {country_b_name}",
+        name=f"Closest point on {location_b_name}",
         geometry_type=GeometryType.POINT,
         geometry_geojson=geometry_to_geojson(point_b_geom),
         fill_color="#CC3366",
@@ -784,69 +848,34 @@ def calculate_minimum_distance(
     )
     
     layers.extend([point_a_layer, point_b_layer])
-    
-    # Weapon system range rings
-    if input_data.show_buffer_rings and weapon_systems:
-        # Make country A geometry valid for clipping
-        geometry_a_valid = make_geometry_valid(geometry_a)
-        
-        # Sort weapons by range (largest first for proper layering)
-        sorted_weapons = sorted(weapon_systems, key=lambda w: w["range_km"], reverse=True)
-        
-        for weapon in sorted_weapons:
-            weapon_name = weapon["name"]
-            weapon_range = weapon["range_km"]
-            range_class = classify_range(weapon_range)
-            
-            # Create geodesic buffer
-            buffer_geom = create_geodesic_buffer(geometry_a, weapon_range, "low")
-            buffer_geom = make_geometry_valid(buffer_geom)
-            
-            # Clip to country A's border (show only area beyond the border)
-            try:
-                buffer_geom = buffer_geom.difference(geometry_a_valid)
-                buffer_geom = make_geometry_valid(buffer_geom)
-            except Exception as e:
-                print(f"Could not clip buffer for {weapon_name}: {e}")
-            
-            # Create layer name with weapon system and classification
-            layer_name = weapon_name
-            if range_class:
-                layer_name = f"{weapon_name} ({range_class.value})"
-            
-            buffer_layer = RangeRingLayer(
-                name=layer_name,
-                geometry_type=GeometryType.POLYGON if buffer_geom.geom_type == "Polygon" else GeometryType.MULTI_POLYGON,
-                geometry_geojson=geometry_to_geojson(buffer_geom),
-                fill_color=_get_color_for_range(weapon_range),
-                stroke_color=_get_color_for_range(weapon_range),
-                fill_opacity=0.15,
-                stroke_width=1.5,
-                range_km=weapon_range,
-            )
-            layers.append(buffer_layer)
+    report_progress(0.80, "Point markers created")
     
     # Calculate center and bounds
+    report_progress(0.85, "Calculating map bounds...")
     combined = unary_union([geometry_a, geometry_b])
     bounds = get_geometry_bounds(combined)
     center_lat = (point_a[0] + point_b[0]) / 2
     center_lon = (point_a[1] + point_b[1]) / 2
     
     # Calculate processing time
+    report_progress(0.90, "Computing processing statistics...")
     processing_time = (time.time() - start_time) * 1000
     
     # Create metadata
+    report_progress(0.93, "Building export metadata...")
     metadata = ExportMetadata(
         tool_type=OutputType.MINIMUM_RANGE_RING,
         processing_time_ms=processing_time,
         geodesic_method="geographiclib",
         range_km=distance_km,
+        origin_name=location_a_name,
     )
     
+    report_progress(0.96, "Creating output object...")
     output = RangeRingOutput(
         output_type=OutputType.MINIMUM_RANGE_RING,
         title="Minimum Distance Analysis",
-        subtitle=f"{country_a_name} to {country_b_name}",
+        subtitle=f"{location_a_name} to {location_b_name}",
         description=f"Minimum geodesic distance: {distance_km:,.1f} km",
         layers=layers,
         center_latitude=center_lat,
@@ -856,10 +885,10 @@ def calculate_minimum_distance(
     )
     
     result = MinimumDistanceResult(
-        country_a_code=input_data.country_code_a,
-        country_b_code=input_data.country_code_b,
-        country_a_name=country_a_name,
-        country_b_name=country_b_name,
+        country_a_code=input_data.country_code_a or "",
+        country_b_code=input_data.country_code_b or "",
+        country_a_name=location_a_name,
+        country_b_name=location_b_name,
         distance_km=distance_km,
         point_a_lat=point_a[0],
         point_a_lon=point_a[1],
@@ -867,6 +896,7 @@ def calculate_minimum_distance(
         point_b_lon=point_b[1],
     )
     
+    report_progress(1.0, "Complete!")
     return output, result
 
 

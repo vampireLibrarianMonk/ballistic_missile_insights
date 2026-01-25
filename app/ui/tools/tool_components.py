@@ -5,6 +5,7 @@ Renders all five analytical tools with their inputs, outputs, and export control
 
 import streamlit as st
 from typing import Optional
+from shapely.geometry import Point
 
 from app.data.loaders import get_data_service
 from app.models.inputs import (
@@ -829,16 +830,14 @@ def render_reverse_range_ring_tool() -> None:
                 resolution = st.selectbox("Resolution", options=["low", "normal", "high"], index=1, key="reverse_resolution")
                 
                 if st.button("🚀 Generate Launch Envelope", key="reverse_generate"):
-                    # Create progress bar container
-                    progress_bar = st.progress(0, text="Initializing...")
+                    # Create progress bar - updates come from the service
+                    progress_bar = st.progress(0, text="0% - Initializing...")
                     
                     def update_progress(pct: float, status: str):
-                        """Callback to update progress bar."""
+                        """Callback to update progress bar from generate_reverse_range_ring."""
                         progress_bar.progress(min(pct, 1.0), text=f"{int(pct * 100)}% - {status}")
                     
                     try:
-                        update_progress(0.1, "Loading target coordinates...")
-                        
                         target = PointOfInterest(name=city_name, latitude=target_lat, longitude=target_lon)
                         input_data = ReverseRangeRingInput(
                             target_point=target,
@@ -848,41 +847,54 @@ def render_reverse_range_ring_tool() -> None:
                             resolution=resolution,
                         )
                         
-                        update_progress(0.2, "Loading shooter country geometry...")
-                        
                         # Get shooter country geometry for intersection
                         shooter_geometry = data_service.get_country_geometry(shooter_country_code)
                         
-                        update_progress(0.3, "Calculating reach envelope...")
-                        update_progress(0.5, "Computing distance ranges...")
-                        update_progress(0.7, "Generating launch region...")
-                        
+                        # Generate with progress callback - all updates come from the service
                         output = generate_reverse_range_ring(
                             input_data, 
                             threat_country_geometry=shooter_geometry,
-                            threat_country_name=shooter_country_name
+                            threat_country_name=shooter_country_name,
+                            progress_callback=update_progress
                         )
                         
-                        update_progress(0.9, "Rendering output...")
-                        
+                        # Clear previous outputs and add new one
+                        clear_tool_outputs("reverse_range_ring")
                         add_tool_output("reverse_range_ring", output)
                         
-                        # Complete progress
+                        # Complete progress and rerun to render from session state
                         progress_bar.progress(1.0, text="100% - Complete!")
-                        
-                        st.success("Launch envelope generated!")
-                        
-                        st.subheader(output.title)
-                        st.caption(output.subtitle)
-                        st.markdown(f"*{output.description}*")
-                        
-                        deck = render_range_ring_output(output, get_map_style())
-                        render_map_with_legend(deck, output)
-                        render_export_controls(output, "reverse_range_ring")
+                        st.rerun()
                         
                     except Exception as e:
                         progress_bar.progress(1.0, text="Error!")
-                        st.error(f"Error: {e}")
+                        st.error(f"Error generating range ring: {e}")
+                
+                # Render output from session state (persists across reruns including downloads)
+                tool_state = get_tool_state("reverse_range_ring")
+                if tool_state.get("outputs"):
+                    output = tool_state["outputs"][-1]  # Get latest output
+                    
+                    st.success("Launch envelope generated!")
+                    
+                    st.subheader(output.title)
+                    st.caption(output.subtitle)
+                    st.markdown(f"*{output.description}*")
+                    
+                    deck = render_range_ring_output(output, get_map_style())
+                    render_map_with_legend(deck, output)
+                    
+                    # Analyst mode metadata
+                    if is_analyst_mode():
+                        with st.expander("📊 Technical Metadata"):
+                            st.json({
+                                "output_id": str(output.output_id),
+                                "vertex_count": output.metadata.vertex_count if output.metadata else None,
+                                "processing_time_ms": output.metadata.processing_time_ms if output.metadata else None,
+                                "range_km": output.metadata.range_km if output.metadata else None,
+                            })
+                    
+                    render_export_controls(output, "reverse_range_ring")
         else:
             st.info("👆 Select a target city and shooter country, then click **Calculate Availability** to see which systems can reach the target.")
 
@@ -891,76 +903,133 @@ def render_minimum_range_ring_tool() -> None:
     """Render the Minimum Range Ring Generator tool."""
     with st.expander("📏 Minimum Range Ring Generator", expanded=False):
         st.markdown("""
-        Calculate and visualize the minimum geodesic distance between two countries.
+        Calculate and visualize the minimum geodesic distance between two locations.
         """)
         
         data_service = get_data_service()
-        countries = data_service.get_country_list()
+        
+        # Location type selection
+        location_type = st.radio(
+            "Select Location Type",
+            options=["Countries", "Cities"],
+            horizontal=True,
+            key="min_location_type",
+        )
         
         col1, col2 = st.columns(2)
         
-        with col1:
-            country_a = st.selectbox("Country A (Origin)", options=countries, key="min_country_a")
-            country_code_a = data_service.get_country_code(country_a) if country_a else None
-        
-        with col2:
-            country_b = st.selectbox("Country B (Target)", options=countries, index=1 if len(countries) > 1 else 0, key="min_country_b")
-            country_code_b = data_service.get_country_code(country_b) if country_b else None
+        if location_type == "Countries":
+            countries = data_service.get_country_list()
+            
+            with col1:
+                st.markdown("**Location A**")
+                location_a_name = st.selectbox("Select Country A", options=countries, key="min_country_a")
+                country_code_a = data_service.get_country_code(location_a_name) if location_a_name else None
+                geom_a = data_service.get_country_geometry(country_code_a) if country_code_a else None
+            
+            with col2:
+                st.markdown("**Location B**")
+                location_b_name = st.selectbox("Select Country B", options=countries, index=1 if len(countries) > 1 else 0, key="min_country_b")
+                country_code_b = data_service.get_country_code(location_b_name) if location_b_name else None
+                geom_b = data_service.get_country_geometry(country_code_b) if country_code_b else None
+        else:
+            # Cities mode
+            cities = data_service.get_city_list()
+            
+            with col1:
+                st.markdown("**Location A**")
+                location_a_name = st.selectbox("Select City A", options=cities, key="min_city_a")
+                coords_a = data_service.get_city_coordinates(location_a_name)
+                if coords_a:
+                    lat_a, lon_a = coords_a
+                    st.caption(f"📍 {lat_a:.4f}, {lon_a:.4f}")
+                    geom_a = Point(lon_a, lat_a)
+                else:
+                    geom_a = None
+                country_code_a = None
+            
+            with col2:
+                st.markdown("**Location B**")
+                # Get a different default city for B
+                default_idx_b = 1 if len(cities) > 1 else 0
+                location_b_name = st.selectbox("Select City B", options=cities, index=default_idx_b, key="min_city_b")
+                coords_b = data_service.get_city_coordinates(location_b_name)
+                if coords_b:
+                    lat_b, lon_b = coords_b
+                    st.caption(f"📍 {lat_b:.4f}, {lon_b:.4f}")
+                    geom_b = Point(lon_b, lat_b)
+                else:
+                    geom_b = None
+                country_code_b = None
         
         show_line = st.checkbox("Show minimum distance line", value=True, key="min_show_line")
         
-        # Weapon system buffer selection
-        st.markdown("**Show Weapon System Ranges:**")
-        st.caption("Select weapon systems to display as range rings from Country A")
-        
-        if country_code_a:
-            weapons = data_service.get_weapon_systems(country_code_a)
-            if weapons:
-                # Create columns for weapon checkboxes
-                selected_weapons = []
-                cols = st.columns(2)
-                for i, weapon in enumerate(weapons[:8]):  # Limit to 8 weapons
-                    with cols[i % 2]:
-                        if st.checkbox(f"{weapon['name']} ({weapon['range_km']:,.0f} km)", 
-                                      key=f"min_weapon_{i}", value=False):
-                            selected_weapons.append(weapon)
-            else:
-                selected_weapons = []
-                st.info(f"No weapon systems available for {country_a}")
-        else:
-            selected_weapons = []
-        
         if st.button("🚀 Calculate Minimum Distance", key="min_generate"):
-            if country_code_a and country_code_b:
-                with st.spinner("Calculating..."):
-                    try:
-                        input_data = MinimumRangeRingInput(
-                            country_code_a=country_code_a,
-                            country_code_b=country_code_b,
-                            show_minimum_line=show_line,
-                            show_buffer_rings=len(selected_weapons) > 0,
-                        )
-                        geom_a = data_service.get_country_geometry(country_code_a)
-                        geom_b = data_service.get_country_geometry(country_code_b)
-                        
-                        output, result = calculate_minimum_distance(
-                            input_data, geom_a, geom_b, country_a, country_b,
-                            weapon_systems=selected_weapons
-                        )
-                        
-                        add_tool_output("minimum_range_ring", output)
-                        
-                        st.success(f"Minimum distance: **{result.distance_km:,.1f} km**")
-                        st.subheader(output.title)
-                        st.markdown(f"*Buffer rings show weapon system ranges from **{country_a}** that could potentially reach **{country_b}**. "
-                                   f"Rings are clipped to {country_a}'s border.*")
-                        
-                        deck = render_range_ring_output(output, get_map_style())
-                        render_map_with_legend(deck, output)
-                        render_export_controls(output, "minimum_range_ring")
-                        
-                    except Exception as e:
-                        st.error(f"Error: {e}")
+            if geom_a is not None and geom_b is not None:
+                # Create progress bar - updates come from the service
+                progress_bar = st.progress(0, text="0% - Initializing...")
+                
+                def update_progress(pct: float, status: str):
+                    """Callback to update progress bar from calculate_minimum_distance."""
+                    progress_bar.progress(min(pct, 1.0), text=f"{int(pct * 100)}% - {status}")
+                
+                try:
+                    input_data = MinimumRangeRingInput(
+                        country_code_a=country_code_a,
+                        country_code_b=country_code_b,
+                        show_minimum_line=show_line,
+                        show_buffer_rings=False,
+                    )
+                    
+                    output, result = calculate_minimum_distance(
+                        input_data, geom_a, geom_b, location_a_name, location_b_name,
+                        progress_callback=update_progress
+                    )
+                    
+                    # Store result in session state for persistence
+                    st.session_state.min_distance_result = result
+                    
+                    # Clear previous outputs and add new one
+                    clear_tool_outputs("minimum_range_ring")
+                    add_tool_output("minimum_range_ring", output)
+                    
+                    # Complete progress and rerun to render from session state
+                    progress_bar.progress(1.0, text="100% - Complete!")
+                    st.rerun()
+                    
+                except Exception as e:
+                    progress_bar.progress(1.0, text="Error!")
+                    st.error(f"Error calculating minimum distance: {e}")
+            else:
+                st.warning("Please select valid locations for both A and B.")
+        
+        # Render output from session state (persists across reruns including downloads)
+        tool_state = get_tool_state("minimum_range_ring")
+        if tool_state.get("outputs"):
+            output = tool_state["outputs"][-1]  # Get latest output
+            
+            # Get result from session state
+            result = st.session_state.get("min_distance_result")
+            if result:
+                st.success(f"Minimum distance: **{result.distance_km:,.1f} km**")
+            
+            st.subheader(output.title)
+            st.caption(output.subtitle)
+            st.markdown(f"*{output.description}*")
+            
+            deck = render_range_ring_output(output, get_map_style())
+            render_map_with_legend(deck, output)
+            
+            # Analyst mode metadata
+            if is_analyst_mode():
+                with st.expander("📊 Technical Metadata"):
+                    st.json({
+                        "output_id": str(output.output_id),
+                        "processing_time_ms": output.metadata.processing_time_ms if output.metadata else None,
+                        "range_km": output.metadata.range_km if output.metadata else None,
+                    })
+            
+            render_export_controls(output, "minimum_range_ring")
 
 
 def render_custom_poi_tool() -> None:
