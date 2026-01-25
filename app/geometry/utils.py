@@ -242,49 +242,39 @@ def create_geodesic_buffer(
     # Get all boundary coordinates
     boundary_coords = _extract_all_coordinates(geometry)
     
-    # Determine base sampling density based on resolution
-    # (Reduced by 200% from previous 4x values: 1200→400, 600→200, 300→100)
+    # Determine circle detail based on resolution
     if resolution == "high":
-        base_max_samples = 400
         circle_points = 180
     elif resolution == "normal":
-        base_max_samples = 200
         circle_points = 120
     else:  # low
-        base_max_samples = 100
         circle_points = 72
     
-    # ADAPTIVE SAMPLING: Increase sample density for shorter ranges
-    # Short-range missiles (< 500 km) need denser sampling
-    if distance_km < 300:
-        range_multiplier = 30
-    elif distance_km < 500:
-        range_multiplier = 2.0
-    elif distance_km < 1000:
-        range_multiplier = 1.5
-    elif distance_km < 2000:
-        range_multiplier = 1.25
-    else:
-        range_multiplier = 1.0
-    
-    max_samples = int(base_max_samples * range_multiplier)
-    
-    # Cap at reasonable maximum
-    # max_samples = min(max_samples, 1000)
-    
-    report_progress(0.12, f"Analyzing boundary curvature for adaptive sampling...")
-    
     # =========================================================================
-    # ADAPTIVE DENSITY SAMPLING based on boundary curvature
-    # This ensures high-curvature areas (corners, complex coastlines) get more
-    # sample points, while straight sections get fewer.
+    # ARC-LENGTH SAMPLING
+    # Spacing is derived from buffer radius to ensure overlapping circles:
+    # - max_spacing_km = distance_km * 0.15 ensures ~15% of radius spacing
+    # - Adjacent circles will overlap significantly, closing all gaps
+    # - Smaller buffers = tighter spacing, larger buffers = wider spacing
     # =========================================================================
-    sampled_coords = _adaptive_curvature_sampling(
-        boundary_coords, max_samples, progress_callback,
+    
+    # Spacing factor: 15% of buffer radius ensures good overlap
+    # For a 1000 km buffer, spacing = 150 km
+    # For a 100 km buffer, spacing = 15 km
+    spacing_factor = 0.15
+    max_spacing_km = distance_km * spacing_factor
+    
+    # Ensure minimum spacing for very small ranges (at least 5 km)
+    max_spacing_km = max(max_spacing_km, 5.0)
+    
+    report_progress(0.12, f"Arc-length sampling with {max_spacing_km:.1f} km spacing...")
+    
+    sampled_coords = _arc_length_sampling(
+        boundary_coords, max_spacing_km, progress_callback,
         start_pct=0.12, end_pct=0.20
     )
     
-    report_progress(0.20, f"Using {len(sampled_coords)} adaptively sampled points for {distance_km:.0f}km range...")
+    report_progress(0.20, f"Using {len(sampled_coords)} arc-length sampled points for {distance_km:.0f}km range...")
     
     report_progress(0.2, f"Creating geodesic circles from {len(sampled_coords)} boundary points...")
 
@@ -557,163 +547,102 @@ def _cascaded_union_with_progress(
     return result
 
 
-def _adaptive_curvature_sampling(
+def _arc_length_sampling(
     coords: list[tuple[float, float]],
-    max_samples: int,
+    spacing_km: float,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     start_pct: float = 0.0,
     end_pct: float = 1.0,
 ) -> list[tuple[float, float]]:
     """
-    Sample boundary coordinates with adaptive density based on curvature.
-    
-    High-curvature areas (corners, complex coastlines) get more sample points,
-    while straight sections get fewer. This ensures gaps don't appear at
-    complex boundary sections without wasting samples on straight edges.
-    
+    Sample boundary coordinates based on true geodesic arc-length.
+
+    Walks the boundary in order, accumulating geodesic distance segment-by-segment,
+    and emits a sample point whenever the accumulated distance exceeds the spacing
+    threshold. This guarantees adjacent buffer circles never separate far enough
+    to create gaps, regardless of boundary complexity.
+
     The algorithm:
-    1. Calculate the turning angle (curvature) at each point
-    2. Assign sampling weights based on curvature (higher curvature = more weight)
-    3. Select points proportionally to their weights
-    
+    1. Walk boundary coordinates in order
+    2. Compute geodesic distance for each segment
+    3. Emit a sample when accumulated distance >= spacing_km
+    4. Reset accumulator and continue
+
+    This is deterministic: identical inputs always produce identical outputs.
+
     Args:
-        coords: List of (lon, lat) coordinate tuples
-        max_samples: Maximum number of samples to return
+        coords: List of (lon, lat) coordinate tuples (boundary vertices)
+        spacing_km: Maximum geodesic distance between sample points
         progress_callback: Optional progress callback
         start_pct: Starting progress percentage
         end_pct: Ending progress percentage
-        
+
     Returns:
-        List of sampled coordinates with adaptive density
+        List of sampled coordinates spaced by geodesic arc-length
     """
-    import math
-    
     def report(pct: float, status: str):
         if progress_callback:
             progress_callback(pct, status)
-    
+
     n = len(coords)
 
-    if n <= max_samples:
-        # Optional light decimation for extremely dense geometries
-        target = min(n, max_samples)
-        step = max(1, n // target)
-        return coords[::step]
-
-    # If very few points, just return uniform sample
-    if n < 10:
+    # Handle edge cases
+    if n == 0:
+        return []
+    if n == 1:
         return coords
-    
-    report(start_pct + (end_pct - start_pct) * 0.2, "Computing boundary curvature...")
-    
-    # Calculate curvature (turning angle) at each point
-    # Curvature is approximated as the angle change between consecutive segments
-    curvatures = []
-    for i in range(n):
-        # Get three consecutive points (wrapping around)
-        p_prev = coords[(i - 1) % n]
-        p_curr = coords[i]
-        p_next = coords[(i + 1) % n]
-        
-        # Vector from prev to curr
-        v1_lon = p_curr[0] - p_prev[0]
-        v1_lat = p_curr[1] - p_prev[1]
-        
-        # Vector from curr to next
-        v2_lon = p_next[0] - p_curr[0]
-        v2_lat = p_next[1] - p_curr[1]
-        
-        # Calculate lengths
-        len1 = math.sqrt(v1_lon**2 + v1_lat**2)
-        len2 = math.sqrt(v2_lon**2 + v2_lat**2)
-        
-        if len1 < 1e-10 or len2 < 1e-10:
-            # Degenerate case - no curvature
-            curvatures.append(0.0)
-            continue
-        
-        # Normalize vectors
-        v1_lon /= len1
-        v1_lat /= len1
-        v2_lon /= len2
-        v2_lat /= len2
-        
-        # Dot product gives cos(angle)
-        dot = v1_lon * v2_lon + v1_lat * v2_lat
-        dot = max(-1.0, min(1.0, dot))  # Clamp for numerical stability
-        
-        # Angle in radians (0 = straight, pi = complete reversal)
-        angle = math.acos(dot)
-        curvatures.append(angle)
-    
-    report(start_pct + (end_pct - start_pct) * 0.5, "Computing sampling weights...")
-    
-    # Convert curvatures to sampling weights
-    # Add a base weight so even straight sections get some samples
-    base_weight = 0.1
-    curvature_boost = 5.0  # How much extra weight for high curvature
-    
-    weights = []
-    for c in curvatures:
-        # Normalize curvature (0 to 1 scale, where 1 is a sharp corner)
-        normalized = c / math.pi
-        weight = base_weight + curvature_boost * normalized
-        weights.append(weight)
-    
-    # Compute cumulative weights for weighted sampling
-    total_weight = sum(weights)
-    cumulative = []
-    running = 0.0
-    for w in weights:
-        running += w
-        cumulative.append(running)
-    
-    report(start_pct + (end_pct - start_pct) * 0.7, "Selecting adaptive samples...")
-    
-    # Select samples proportionally to weights
-    sampled_indices = set()
+    if n <= 3:
+        return coords  # Need at least a triangle
 
-    # Select high-curvature points FIRST, but cap them
-    curvature_threshold = 0.3 * math.pi  # ~54 degrees
+    # Minimum spacing to prevent excessive samples (at least 1 km)
+    spacing_km = max(spacing_km, 1.0)
 
-    high_curvature_indices = [
-        i for i, c in enumerate(curvatures)
-        if c >= curvature_threshold
-    ]
+    report(start_pct + (end_pct - start_pct) * 0.1, f"Arc-length sampling with {spacing_km:.1f} km spacing...")
 
-    # If too many corners, downsample deterministically
-    if len(high_curvature_indices) > max_samples:
-        step = len(high_curvature_indices) / max_samples
-        high_curvature_indices = [
-            high_curvature_indices[int(i * step)]
-            for i in range(max_samples)
-        ]
+    sampled_coords = []
+    accumulated_dist = 0.0
 
-    sampled_indices = set(high_curvature_indices)
+    # Always include the first point
+    sampled_coords.append(coords[0])
+    last_sampled = coords[0]
 
-    # Fill remaining slots with weighted random sampling
-    remaining = max_samples - len(sampled_indices)
-    if remaining > 0:
-        # Use deterministic weighted selection (not random, for reproducibility)
-        step = total_weight / remaining
-        target = step / 2  # Start at half step
-        
-        for _ in range(remaining):
-            # Find the index where cumulative weight exceeds target
-            for i, cum_w in enumerate(cumulative):
-                if cum_w >= target and i not in sampled_indices:
-                    sampled_indices.add(i)
-                    break
-            target += step
-            # Wrap around if needed
-            if target > total_weight:
-                target -= total_weight
-    
-    # Sort indices and extract coordinates
-    sorted_indices = sorted(sampled_indices)
-    sampled_coords = [coords[i] for i in sorted_indices]
-    
-    report(end_pct, f"Selected {len(sampled_coords)} points (including {sum(1 for c in curvatures if c >= curvature_threshold)} high-curvature points)")
+    # Walk through all coordinates, accumulating geodesic distance
+    for i in range(1, n):
+        curr_coord = coords[i]
+
+        # Calculate geodesic distance from previous point
+        prev_coord = coords[i - 1]
+        segment_dist = geodesic_distance(
+            prev_coord[1], prev_coord[0],  # lat, lon
+            curr_coord[1], curr_coord[0]
+        )
+
+        accumulated_dist += segment_dist
+
+        # Emit sample point when accumulated distance exceeds threshold
+        if accumulated_dist >= spacing_km:
+            sampled_coords.append(curr_coord)
+            last_sampled = curr_coord
+            accumulated_dist = 0.0  # Reset accumulator
+
+        # Progress reporting every 10%
+        if i % max(1, n // 10) == 0:
+            pct = start_pct + (end_pct - start_pct) * (0.1 + 0.8 * (i / n))
+            report(pct, f"Walking boundary: {i}/{n} vertices...")
+
+    # Always include the last point if it's not too close to the previous sample
+    last_coord = coords[-1]
+    if last_coord != last_sampled:
+        # Check distance from last sampled point
+        final_dist = geodesic_distance(
+            last_sampled[1], last_sampled[0],
+            last_coord[1], last_coord[0]
+        )
+        # Include if it's at least 10% of spacing (to close the ring properly)
+        if final_dist >= spacing_km * 0.1:
+            sampled_coords.append(last_coord)
+
+    report(end_pct, f"Arc-length sampled: {len(sampled_coords)} points from {n} vertices")
     
     return sampled_coords
 
