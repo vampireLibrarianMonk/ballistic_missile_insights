@@ -143,12 +143,12 @@ class ReverseRangeRingInput(BaseModel):
 class MinimumRangeRingInput(BaseModel):
     """
     Input for Minimum Range Ring Generator.
-    Calculates the minimum geodesic distance between two countries.
+    Calculates the minimum geodesic distance between two locations (countries or cities).
     """
-    country_code_a: str = Field(..., description="ISO3 code for first country")
-    country_code_b: str = Field(..., description="ISO3 code for second country")
+    country_code_a: Optional[str] = Field(None, description="ISO3 code for first location (if country)")
+    country_code_b: Optional[str] = Field(None, description="ISO3 code for second location (if country)")
     
-    # Optional visualization range
+    # Optional visualization options
     show_minimum_line: bool = Field(True, description="Show the minimum distance line")
     show_buffer_rings: bool = Field(False, description="Show buffer rings at key distances")
 

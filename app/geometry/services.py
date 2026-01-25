@@ -762,32 +762,44 @@ def calculate_minimum_distance(
     input_data: MinimumRangeRingInput,
     geometry_a: BaseGeometry,
     geometry_b: BaseGeometry,
-    country_a_name: str = "Country A",
-    country_b_name: str = "Country B",
-    weapon_systems: Optional[list[dict]] = None,
+    location_a_name: str = "Location A",
+    location_b_name: str = "Location B",
+    progress_callback: ProgressCallback = None,
 ) -> tuple[RangeRingOutput, MinimumDistanceResult]:
     """
-    Calculate the minimum distance between two countries.
+    Calculate the minimum distance between two locations (countries or cities).
     
     Args:
         input_data: Input parameters
-        geometry_a: Geometry of first country
-        geometry_b: Geometry of second country
-        country_a_name: Name of first country
-        country_b_name: Name of second country
-        weapon_systems: Optional list of weapon system dicts with 'name' and 'range_km'
+        geometry_a: Geometry of first location (country polygon or city point)
+        geometry_b: Geometry of second location (country polygon or city point)
+        location_a_name: Name of first location
+        location_b_name: Name of second location
+        progress_callback: Optional callback for progress updates (progress: float 0-1, status: str)
         
     Returns:
         Tuple of (RangeRingOutput, MinimumDistanceResult)
     """
+    def report_progress(pct: float, status: str):
+        if progress_callback:
+            progress_callback(pct, status)
+    
     start_time = time.time()
+    report_progress(0.0, "Initializing minimum distance calculation...")
+    
+    report_progress(0.05, f"Loading geometry for {location_a_name}...")
+    report_progress(0.10, f"Loading geometry for {location_b_name}...")
     
     # Find closest points
+    report_progress(0.15, "Sampling boundary coordinates...")
+    report_progress(0.25, "Computing geodesic distances between all point pairs...")
     point_a, point_b, distance_km = find_closest_points(geometry_a, geometry_b)
+    report_progress(0.50, f"Minimum distance found: {distance_km:,.1f} km")
     
     layers = []
     
     # Create minimum distance line
+    report_progress(0.55, "Creating geodesic line between closest points...")
     if input_data.show_minimum_line:
         line = geodesic_line(
             point_a[0], point_a[1],
@@ -807,13 +819,15 @@ def calculate_minimum_distance(
             label=f"{distance_km:,.1f} km",
         )
         layers.append(line_layer)
+    report_progress(0.65, "Geodesic line created")
     
     # Create point markers
+    report_progress(0.70, f"Creating marker for closest point on {location_a_name}...")
     point_a_geom = Point(point_a[1], point_a[0])
     point_b_geom = Point(point_b[1], point_b[0])
     
     point_a_layer = RangeRingLayer(
-        name=f"Closest point on {country_a_name}",
+        name=f"Closest point on {location_a_name}",
         geometry_type=GeometryType.POINT,
         geometry_geojson=geometry_to_geojson(point_a_geom),
         fill_color="#3366CC",
@@ -822,8 +836,9 @@ def calculate_minimum_distance(
         stroke_width=2.0,
     )
     
+    report_progress(0.75, f"Creating marker for closest point on {location_b_name}...")
     point_b_layer = RangeRingLayer(
-        name=f"Closest point on {country_b_name}",
+        name=f"Closest point on {location_b_name}",
         geometry_type=GeometryType.POINT,
         geometry_geojson=geometry_to_geojson(point_b_geom),
         fill_color="#CC3366",
@@ -833,69 +848,34 @@ def calculate_minimum_distance(
     )
     
     layers.extend([point_a_layer, point_b_layer])
-    
-    # Weapon system range rings
-    if input_data.show_buffer_rings and weapon_systems:
-        # Make country A geometry valid for clipping
-        geometry_a_valid = make_geometry_valid(geometry_a)
-        
-        # Sort weapons by range (largest first for proper layering)
-        sorted_weapons = sorted(weapon_systems, key=lambda w: w["range_km"], reverse=True)
-        
-        for weapon in sorted_weapons:
-            weapon_name = weapon["name"]
-            weapon_range = weapon["range_km"]
-            range_class = classify_range(weapon_range)
-            
-            # Create geodesic buffer
-            buffer_geom = create_geodesic_buffer(geometry_a, weapon_range, "low")
-            buffer_geom = make_geometry_valid(buffer_geom)
-            
-            # Clip to country A's border (show only area beyond the border)
-            try:
-                buffer_geom = buffer_geom.difference(geometry_a_valid)
-                buffer_geom = make_geometry_valid(buffer_geom)
-            except Exception as e:
-                print(f"Could not clip buffer for {weapon_name}: {e}")
-            
-            # Create layer name with weapon system and classification
-            layer_name = weapon_name
-            if range_class:
-                layer_name = f"{weapon_name} ({range_class.value})"
-            
-            buffer_layer = RangeRingLayer(
-                name=layer_name,
-                geometry_type=GeometryType.POLYGON if buffer_geom.geom_type == "Polygon" else GeometryType.MULTI_POLYGON,
-                geometry_geojson=geometry_to_geojson(buffer_geom),
-                fill_color=_get_color_for_range(weapon_range),
-                stroke_color=_get_color_for_range(weapon_range),
-                fill_opacity=0.15,
-                stroke_width=1.5,
-                range_km=weapon_range,
-            )
-            layers.append(buffer_layer)
+    report_progress(0.80, "Point markers created")
     
     # Calculate center and bounds
+    report_progress(0.85, "Calculating map bounds...")
     combined = unary_union([geometry_a, geometry_b])
     bounds = get_geometry_bounds(combined)
     center_lat = (point_a[0] + point_b[0]) / 2
     center_lon = (point_a[1] + point_b[1]) / 2
     
     # Calculate processing time
+    report_progress(0.90, "Computing processing statistics...")
     processing_time = (time.time() - start_time) * 1000
     
     # Create metadata
+    report_progress(0.93, "Building export metadata...")
     metadata = ExportMetadata(
         tool_type=OutputType.MINIMUM_RANGE_RING,
         processing_time_ms=processing_time,
         geodesic_method="geographiclib",
         range_km=distance_km,
+        origin_name=location_a_name,
     )
     
+    report_progress(0.96, "Creating output object...")
     output = RangeRingOutput(
         output_type=OutputType.MINIMUM_RANGE_RING,
         title="Minimum Distance Analysis",
-        subtitle=f"{country_a_name} to {country_b_name}",
+        subtitle=f"{location_a_name} to {location_b_name}",
         description=f"Minimum geodesic distance: {distance_km:,.1f} km",
         layers=layers,
         center_latitude=center_lat,
@@ -905,10 +885,10 @@ def calculate_minimum_distance(
     )
     
     result = MinimumDistanceResult(
-        country_a_code=input_data.country_code_a,
-        country_b_code=input_data.country_code_b,
-        country_a_name=country_a_name,
-        country_b_name=country_b_name,
+        country_a_code=input_data.country_code_a or "",
+        country_b_code=input_data.country_code_b or "",
+        country_a_name=location_a_name,
+        country_b_name=location_b_name,
         distance_km=distance_km,
         point_a_lat=point_a[0],
         point_a_lon=point_a[1],
@@ -916,6 +896,7 @@ def calculate_minimum_distance(
         point_b_lon=point_b[1],
     )
     
+    report_progress(1.0, "Complete!")
     return output, result
 
 
