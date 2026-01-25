@@ -83,12 +83,15 @@
     </g>
   </g>
 
-  <!-- ====== Lower-left callout box ====== -->
+  <!-- ====== Lower-left legend box (dynamic multi-item support) ====== -->
   <g id="lower_left_callout" transform="translate(40,710)">
     <rect id="callout_box" x="0" y="0" width="300" height="70" class="thin-border" fill="#ffffff"/>
-    <!-- Color swatch -->
-    <rect id="callout_swatch" x="18" y="20" width="60" height="30" fill="#f2a2a2" stroke="#999" stroke-width="1"/>
-    <text id="callout_label" x="95" y="42" class="header-text box-text">Washington D.C.</text>
+    <!-- Legend items container - items injected dynamically -->
+    <g id="legend_items_container">
+      <!-- Default first item (will be replaced) -->
+      <rect id="callout_swatch" x="18" y="20" width="14" height="14" fill="#f2a2a2" stroke="#333" stroke-width="1" rx="2"/>
+      <text id="callout_label" x="40" y="32" class="header-text box-text">Washington D.C.</text>
+    </g>
   </g>
 
   <!-- ====== Lower-right coordinate system box ====== -->

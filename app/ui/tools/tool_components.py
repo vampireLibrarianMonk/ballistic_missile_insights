@@ -829,16 +829,14 @@ def render_reverse_range_ring_tool() -> None:
                 resolution = st.selectbox("Resolution", options=["low", "normal", "high"], index=1, key="reverse_resolution")
                 
                 if st.button("🚀 Generate Launch Envelope", key="reverse_generate"):
-                    # Create progress bar container
-                    progress_bar = st.progress(0, text="Initializing...")
+                    # Create progress bar - updates come from the service
+                    progress_bar = st.progress(0, text="0% - Initializing...")
                     
                     def update_progress(pct: float, status: str):
-                        """Callback to update progress bar."""
+                        """Callback to update progress bar from generate_reverse_range_ring."""
                         progress_bar.progress(min(pct, 1.0), text=f"{int(pct * 100)}% - {status}")
                     
                     try:
-                        update_progress(0.1, "Loading target coordinates...")
-                        
                         target = PointOfInterest(name=city_name, latitude=target_lat, longitude=target_lon)
                         input_data = ReverseRangeRingInput(
                             target_point=target,
@@ -848,41 +846,54 @@ def render_reverse_range_ring_tool() -> None:
                             resolution=resolution,
                         )
                         
-                        update_progress(0.2, "Loading shooter country geometry...")
-                        
                         # Get shooter country geometry for intersection
                         shooter_geometry = data_service.get_country_geometry(shooter_country_code)
                         
-                        update_progress(0.3, "Calculating reach envelope...")
-                        update_progress(0.5, "Computing distance ranges...")
-                        update_progress(0.7, "Generating launch region...")
-                        
+                        # Generate with progress callback - all updates come from the service
                         output = generate_reverse_range_ring(
                             input_data, 
                             threat_country_geometry=shooter_geometry,
-                            threat_country_name=shooter_country_name
+                            threat_country_name=shooter_country_name,
+                            progress_callback=update_progress
                         )
                         
-                        update_progress(0.9, "Rendering output...")
-                        
+                        # Clear previous outputs and add new one
+                        clear_tool_outputs("reverse_range_ring")
                         add_tool_output("reverse_range_ring", output)
                         
-                        # Complete progress
+                        # Complete progress and rerun to render from session state
                         progress_bar.progress(1.0, text="100% - Complete!")
-                        
-                        st.success("Launch envelope generated!")
-                        
-                        st.subheader(output.title)
-                        st.caption(output.subtitle)
-                        st.markdown(f"*{output.description}*")
-                        
-                        deck = render_range_ring_output(output, get_map_style())
-                        render_map_with_legend(deck, output)
-                        render_export_controls(output, "reverse_range_ring")
+                        st.rerun()
                         
                     except Exception as e:
                         progress_bar.progress(1.0, text="Error!")
-                        st.error(f"Error: {e}")
+                        st.error(f"Error generating range ring: {e}")
+                
+                # Render output from session state (persists across reruns including downloads)
+                tool_state = get_tool_state("reverse_range_ring")
+                if tool_state.get("outputs"):
+                    output = tool_state["outputs"][-1]  # Get latest output
+                    
+                    st.success("Launch envelope generated!")
+                    
+                    st.subheader(output.title)
+                    st.caption(output.subtitle)
+                    st.markdown(f"*{output.description}*")
+                    
+                    deck = render_range_ring_output(output, get_map_style())
+                    render_map_with_legend(deck, output)
+                    
+                    # Analyst mode metadata
+                    if is_analyst_mode():
+                        with st.expander("📊 Technical Metadata"):
+                            st.json({
+                                "output_id": str(output.output_id),
+                                "vertex_count": output.metadata.vertex_count if output.metadata else None,
+                                "processing_time_ms": output.metadata.processing_time_ms if output.metadata else None,
+                                "range_km": output.metadata.range_km if output.metadata else None,
+                            })
+                    
+                    render_export_controls(output, "reverse_range_ring")
         else:
             st.info("👆 Select a target city and shooter country, then click **Calculate Availability** to see which systems can reach the target.")
 
