@@ -5,7 +5,7 @@ All calculations are true geodesic on the WGS84 ellipsoid.
 """
 
 from typing import Optional, Callable
-
+import multiprocessing as mp
 from geographiclib.geodesic import Geodesic
 from pyproj import Geod
 from shapely.geometry import (
@@ -38,6 +38,23 @@ WORLD_POLYGON_WGS84 = Polygon([
     ( 180.0, -90.0),
     (-180.0, -90.0),
 ])
+
+from typing import Optional
+from shapely.geometry import Polygon
+
+def _circle_worker(args) -> Optional[Polygon]:
+    """
+    Worker function for multiprocessing geodesic circle creation.
+    Must be top-level for pickle compatibility.
+    """
+    lat, lon, distance_km, circle_points = args
+    try:
+        circle = create_geodesic_circle(lat, lon, distance_km, circle_points)
+        if circle.is_valid and not circle.is_empty:
+            return circle
+    except Exception:
+        pass
+    return None
 
 
 def antipode(lat: float, lon: float) -> tuple[float, float]:
@@ -240,7 +257,7 @@ def create_geodesic_buffer(
     # ADAPTIVE SAMPLING: Increase sample density for shorter ranges
     # Short-range missiles (< 500 km) need denser sampling
     if distance_km < 300:
-        range_multiplier = 2.5
+        range_multiplier = 30
     elif distance_km < 500:
         range_multiplier = 2.0
     elif distance_km < 1000:
@@ -253,7 +270,7 @@ def create_geodesic_buffer(
     max_samples = int(base_max_samples * range_multiplier)
     
     # Cap at reasonable maximum
-    max_samples = min(max_samples, 1000)
+    # max_samples = min(max_samples, 1000)
     
     report_progress(0.12, f"Analyzing boundary curvature for adaptive sampling...")
     
@@ -270,25 +287,36 @@ def create_geodesic_buffer(
     report_progress(0.20, f"Using {len(sampled_coords)} adaptively sampled points for {distance_km:.0f}km range...")
     
     report_progress(0.2, f"Creating geodesic circles from {len(sampled_coords)} boundary points...")
-    
-    # Create geodesic circles from each boundary point
-    circles = []
-    total_coords = len(sampled_coords)
-    
-    for i, (lon, lat) in enumerate(sampled_coords):
-        try:
-            circle = create_geodesic_circle(lat, lon, distance_km, circle_points)
-            if circle.is_valid and not circle.is_empty:
-                circles.append(circle)
-        except Exception as e:
-            # Skip invalid points
-            continue
-        
-        # Report progress periodically
-        if i % max(1, total_coords // 10) == 0:
-            pct = 0.2 + 0.5 * (i / total_coords)
-            report_progress(pct, f"Circle {i+1}/{total_coords}...")
-    
+
+    # ------------------------------------------------------------------
+    # PARALLEL geodesic circle creation (CPU-bound)
+    # ------------------------------------------------------------------
+
+    report_progress(0.2, f"Creating geodesic circles from {len(sampled_coords)} boundary points...")
+
+    worker_args = [
+        (lat, lon, distance_km, circle_points)
+        for lon, lat in sampled_coords
+    ]
+
+    # Use sensible default: leave 1 core free
+    cpu_count = max(1, mp.cpu_count() - 1)
+
+    with mp.Pool(processes=cpu_count) as pool:
+        results = []
+        total = len(worker_args)
+
+        for i, circle in enumerate(pool.imap_unordered(_circle_worker, worker_args, chunksize=8)):
+            if circle is not None:
+                results.append(circle)
+
+            # Progress reporting stays SERIAL and safe
+            if i % max(1, total // 10) == 0:
+                pct = 0.2 + 0.5 * (i / total)
+                report_progress(pct, f"Circle {i + 1}/{total}...")
+
+    circles = results
+
     if not circles:
         # Fallback to centroid-based circle if no boundary circles could be created
         centroid = geometry.centroid
@@ -565,11 +593,13 @@ def _adaptive_curvature_sampling(
             progress_callback(pct, status)
     
     n = len(coords)
-    
-    # If we have fewer points than max_samples, return all
+
     if n <= max_samples:
-        return coords
-    
+        # Optional light decimation for extremely dense geometries
+        target = min(n, max_samples)
+        step = max(1, n // target)
+        return coords[::step]
+
     # If very few points, just return uniform sample
     if n < 10:
         return coords
@@ -642,13 +672,25 @@ def _adaptive_curvature_sampling(
     
     # Select samples proportionally to weights
     sampled_indices = set()
-    
-    # Always include high-curvature points (corners)
+
+    # Select high-curvature points FIRST, but cap them
     curvature_threshold = 0.3 * math.pi  # ~54 degrees
-    for i, c in enumerate(curvatures):
-        if c >= curvature_threshold:
-            sampled_indices.add(i)
-    
+
+    high_curvature_indices = [
+        i for i, c in enumerate(curvatures)
+        if c >= curvature_threshold
+    ]
+
+    # If too many corners, downsample deterministically
+    if len(high_curvature_indices) > max_samples:
+        step = len(high_curvature_indices) / max_samples
+        high_curvature_indices = [
+            high_curvature_indices[int(i * step)]
+            for i in range(max_samples)
+        ]
+
+    sampled_indices = set(high_curvature_indices)
+
     # Fill remaining slots with weighted random sampling
     remaining = max_samples - len(sampled_indices)
     if remaining > 0:
