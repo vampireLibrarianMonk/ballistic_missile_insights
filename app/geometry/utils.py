@@ -214,6 +214,10 @@ def create_geodesic_buffer(
     # -----------------------------------------------------------------------------
     # For smaller ranges: Sample boundary points and union circles
     # This ensures the buffer extends from the actual boundary, not just centroid
+    # 
+    # IMPORTANT: For short-range missiles, we need MUCH denser sampling because
+    # the small buffer circles don't overlap as much, leaving visible gaps.
+    # The sampling density is now adaptive based on the range.
     # -----------------------------------------------------------------------------
     
     report_progress(0.1, "Extracting boundary coordinates...")
@@ -221,27 +225,49 @@ def create_geodesic_buffer(
     # Get all boundary coordinates
     boundary_coords = _extract_all_coordinates(geometry)
     
-    # Determine sampling density based on resolution
+    # Determine base sampling density based on resolution
+    # (Reduced by 200% from previous 4x values: 1200→400, 600→200, 300→100)
     if resolution == "high":
-        max_samples = 200
+        base_max_samples = 400
         circle_points = 180
     elif resolution == "normal":
-        max_samples = 100
+        base_max_samples = 200
         circle_points = 120
     else:  # low
-        max_samples = 50
+        base_max_samples = 100
         circle_points = 72
     
-    # Sample boundary points uniformly
-    if len(boundary_coords) > max_samples:
-        step = max(1, len(boundary_coords) // max_samples)
-        sampled_coords = boundary_coords[::step]
+    # ADAPTIVE SAMPLING: Increase sample density for shorter ranges
+    # Short-range missiles (< 500 km) need denser sampling
+    if distance_km < 300:
+        range_multiplier = 2.5
+    elif distance_km < 500:
+        range_multiplier = 2.0
+    elif distance_km < 1000:
+        range_multiplier = 1.5
+    elif distance_km < 2000:
+        range_multiplier = 1.25
     else:
-        sampled_coords = boundary_coords
+        range_multiplier = 1.0
     
-    # Ensure we have at least the corner points
-    if len(sampled_coords) < 4:
-        sampled_coords = boundary_coords[:max_samples] if len(boundary_coords) > max_samples else boundary_coords
+    max_samples = int(base_max_samples * range_multiplier)
+    
+    # Cap at reasonable maximum
+    max_samples = min(max_samples, 1000)
+    
+    report_progress(0.12, f"Analyzing boundary curvature for adaptive sampling...")
+    
+    # =========================================================================
+    # ADAPTIVE DENSITY SAMPLING based on boundary curvature
+    # This ensures high-curvature areas (corners, complex coastlines) get more
+    # sample points, while straight sections get fewer.
+    # =========================================================================
+    sampled_coords = _adaptive_curvature_sampling(
+        boundary_coords, max_samples, progress_callback,
+        start_pct=0.12, end_pct=0.20
+    )
+    
+    report_progress(0.20, f"Using {len(sampled_coords)} adaptively sampled points for {distance_km:.0f}km range...")
     
     report_progress(0.2, f"Creating geodesic circles from {len(sampled_coords)} boundary points...")
     
@@ -501,6 +527,153 @@ def _cascaded_union_with_progress(
     result = unary_union(batches)
     
     return result
+
+
+def _adaptive_curvature_sampling(
+    coords: list[tuple[float, float]],
+    max_samples: int,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    start_pct: float = 0.0,
+    end_pct: float = 1.0,
+) -> list[tuple[float, float]]:
+    """
+    Sample boundary coordinates with adaptive density based on curvature.
+    
+    High-curvature areas (corners, complex coastlines) get more sample points,
+    while straight sections get fewer. This ensures gaps don't appear at
+    complex boundary sections without wasting samples on straight edges.
+    
+    The algorithm:
+    1. Calculate the turning angle (curvature) at each point
+    2. Assign sampling weights based on curvature (higher curvature = more weight)
+    3. Select points proportionally to their weights
+    
+    Args:
+        coords: List of (lon, lat) coordinate tuples
+        max_samples: Maximum number of samples to return
+        progress_callback: Optional progress callback
+        start_pct: Starting progress percentage
+        end_pct: Ending progress percentage
+        
+    Returns:
+        List of sampled coordinates with adaptive density
+    """
+    import math
+    
+    def report(pct: float, status: str):
+        if progress_callback:
+            progress_callback(pct, status)
+    
+    n = len(coords)
+    
+    # If we have fewer points than max_samples, return all
+    if n <= max_samples:
+        return coords
+    
+    # If very few points, just return uniform sample
+    if n < 10:
+        return coords
+    
+    report(start_pct + (end_pct - start_pct) * 0.2, "Computing boundary curvature...")
+    
+    # Calculate curvature (turning angle) at each point
+    # Curvature is approximated as the angle change between consecutive segments
+    curvatures = []
+    for i in range(n):
+        # Get three consecutive points (wrapping around)
+        p_prev = coords[(i - 1) % n]
+        p_curr = coords[i]
+        p_next = coords[(i + 1) % n]
+        
+        # Vector from prev to curr
+        v1_lon = p_curr[0] - p_prev[0]
+        v1_lat = p_curr[1] - p_prev[1]
+        
+        # Vector from curr to next
+        v2_lon = p_next[0] - p_curr[0]
+        v2_lat = p_next[1] - p_curr[1]
+        
+        # Calculate lengths
+        len1 = math.sqrt(v1_lon**2 + v1_lat**2)
+        len2 = math.sqrt(v2_lon**2 + v2_lat**2)
+        
+        if len1 < 1e-10 or len2 < 1e-10:
+            # Degenerate case - no curvature
+            curvatures.append(0.0)
+            continue
+        
+        # Normalize vectors
+        v1_lon /= len1
+        v1_lat /= len1
+        v2_lon /= len2
+        v2_lat /= len2
+        
+        # Dot product gives cos(angle)
+        dot = v1_lon * v2_lon + v1_lat * v2_lat
+        dot = max(-1.0, min(1.0, dot))  # Clamp for numerical stability
+        
+        # Angle in radians (0 = straight, pi = complete reversal)
+        angle = math.acos(dot)
+        curvatures.append(angle)
+    
+    report(start_pct + (end_pct - start_pct) * 0.5, "Computing sampling weights...")
+    
+    # Convert curvatures to sampling weights
+    # Add a base weight so even straight sections get some samples
+    base_weight = 0.1
+    curvature_boost = 5.0  # How much extra weight for high curvature
+    
+    weights = []
+    for c in curvatures:
+        # Normalize curvature (0 to 1 scale, where 1 is a sharp corner)
+        normalized = c / math.pi
+        weight = base_weight + curvature_boost * normalized
+        weights.append(weight)
+    
+    # Compute cumulative weights for weighted sampling
+    total_weight = sum(weights)
+    cumulative = []
+    running = 0.0
+    for w in weights:
+        running += w
+        cumulative.append(running)
+    
+    report(start_pct + (end_pct - start_pct) * 0.7, "Selecting adaptive samples...")
+    
+    # Select samples proportionally to weights
+    sampled_indices = set()
+    
+    # Always include high-curvature points (corners)
+    curvature_threshold = 0.3 * math.pi  # ~54 degrees
+    for i, c in enumerate(curvatures):
+        if c >= curvature_threshold:
+            sampled_indices.add(i)
+    
+    # Fill remaining slots with weighted random sampling
+    remaining = max_samples - len(sampled_indices)
+    if remaining > 0:
+        # Use deterministic weighted selection (not random, for reproducibility)
+        step = total_weight / remaining
+        target = step / 2  # Start at half step
+        
+        for _ in range(remaining):
+            # Find the index where cumulative weight exceeds target
+            for i, cum_w in enumerate(cumulative):
+                if cum_w >= target and i not in sampled_indices:
+                    sampled_indices.add(i)
+                    break
+            target += step
+            # Wrap around if needed
+            if target > total_weight:
+                target -= total_weight
+    
+    # Sort indices and extract coordinates
+    sorted_indices = sorted(sampled_indices)
+    sampled_coords = [coords[i] for i in sorted_indices]
+    
+    report(end_pct, f"Selected {len(sampled_coords)} points (including {sum(1 for c in curvatures if c >= curvature_threshold)} high-curvature points)")
+    
+    return sampled_coords
 
 
 def _extract_all_coordinates(geometry: BaseGeometry) -> list[tuple[float, float]]:

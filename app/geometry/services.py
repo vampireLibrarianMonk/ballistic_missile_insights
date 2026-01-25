@@ -305,6 +305,7 @@ def generate_multiple_range_rings(
     input_data: MultipleRangeRingInput,
     origin_geometry: Optional[BaseGeometry] = None,
     origin_name: str = "Origin",
+    progress_callback: ProgressCallback = None,
 ) -> RangeRingOutput:
     """
     Generate multiple concentric range rings.
@@ -313,63 +314,106 @@ def generate_multiple_range_rings(
         input_data: Input parameters including multiple ranges
         origin_geometry: Optional Shapely geometry for the origin
         origin_name: Name of the origin
+        progress_callback: Optional callback for progress updates (progress: float 0-1, status: str)
         
     Returns:
         RangeRingOutput containing multiple layers
     """
+    def report_progress(pct: float, status: str):
+        if progress_callback:
+            progress_callback(pct, status)
+    
     start_time = time.time()
+    report_progress(0.0, "Initializing multiple range ring generation...")
     
     layers = []
     all_geometries = []
     
     # Determine center point
+    report_progress(0.02, "Determining origin center point...")
     if input_data.origin_point:
         center_lat = input_data.origin_point.latitude
         center_lon = input_data.origin_point.longitude
         origin_name = input_data.origin_point.name
+        report_progress(0.05, f"Using point origin: {origin_name}")
     elif origin_geometry:
         center_lat, center_lon = get_geometry_centroid(origin_geometry)
+        report_progress(0.05, f"Calculated centroid for {origin_name}")
     else:
         raise ValueError("Either origin_point or origin_geometry must be provided")
     
     # Sort ranges from largest to smallest (for proper layering)
+    report_progress(0.08, "Sorting ranges for proper layering...")
     sorted_ranges = sorted(
         input_data.ranges,
         key=lambda r: convert_to_km(r[0], r[1]),
         reverse=True
     )
+    num_ranges = len(sorted_ranges)
+    report_progress(0.10, f"Processing {num_ranges} range ring(s)...")
     
     # Make origin geometry valid for subtraction
     origin_valid = None
     if origin_geometry:
+        report_progress(0.12, "Validating origin geometry...")
         origin_valid = make_geometry_valid(origin_geometry)
+        report_progress(0.15, "Origin geometry validated")
     
-    for range_value, range_unit, label in sorted_ranges:
+    # Process each range - this is the main work (15% - 85%)
+    for ring_idx, (range_value, range_unit, label) in enumerate(sorted_ranges):
         range_km = convert_to_km(range_value, range_unit)
         range_class = classify_range(range_km)
+        ring_label = label or f"{range_km:.0f} km"
+        
+        # Calculate progress for this ring (each ring gets equal share of 15%-85% = 70%)
+        ring_start_pct = 0.15 + (ring_idx / num_ranges) * 0.70
+        ring_end_pct = 0.15 + ((ring_idx + 1) / num_ranges) * 0.70
+        ring_progress_range = ring_end_pct - ring_start_pct
+        
+        report_progress(ring_start_pct, f"Ring {ring_idx + 1}/{num_ranges}: {ring_label} - Starting...")
         
         # Generate ring geometry
         if input_data.origin_point:
+            report_progress(ring_start_pct + ring_progress_range * 0.1, 
+                          f"Ring {ring_idx + 1}/{num_ranges}: Creating geodesic circle ({range_km:.0f} km)...")
             ring_geometry = create_geodesic_circle(
                 center_lat, center_lon, range_km,
                 num_points=180 if input_data.resolution == "normal" else 72
             )
+            report_progress(ring_start_pct + ring_progress_range * 0.8, 
+                          f"Ring {ring_idx + 1}/{num_ranges}: Circle created")
         elif origin_geometry:
+            # Define a nested progress callback for the buffer operation
+            def buffer_progress(buffer_pct: float, buffer_status: str):
+                # Map buffer progress (0-1) to our ring's progress range (10%-70% of ring's allocation)
+                mapped_pct = ring_start_pct + ring_progress_range * (0.1 + buffer_pct * 0.6)
+                report_progress(mapped_pct, f"Ring {ring_idx + 1}/{num_ranges}: {buffer_status}")
+            
+            report_progress(ring_start_pct + ring_progress_range * 0.1, 
+                          f"Ring {ring_idx + 1}/{num_ranges}: Buffering boundary ({range_km:.0f} km)...")
             ring_geometry = create_geodesic_buffer(
-                origin_geometry, range_km, input_data.resolution
+                origin_geometry, range_km, input_data.resolution,
+                progress_callback=buffer_progress
             )
+            
             # Subtract the origin country geometry so ring only shows area BEYOND the border
+            report_progress(ring_start_pct + ring_progress_range * 0.75, 
+                          f"Ring {ring_idx + 1}/{num_ranges}: Subtracting origin from ring...")
             try:
                 ring_geometry = ring_geometry.difference(origin_valid)
             except Exception as e:
                 print(f"Could not subtract country geometry: {e}")
         
+        report_progress(ring_start_pct + ring_progress_range * 0.85, 
+                      f"Ring {ring_idx + 1}/{num_ranges}: Validating geometry...")
         ring_geometry = make_geometry_valid(ring_geometry)
         all_geometries.append(ring_geometry)
         
         # Create layer
         layer_name = label or f"{range_km:.0f} km"
         
+        report_progress(ring_start_pct + ring_progress_range * 0.95, 
+                      f"Ring {ring_idx + 1}/{num_ranges}: Creating layer...")
         layer = RangeRingLayer(
             name=layer_name,
             geometry_type=GeometryType.POLYGON if ring_geometry.geom_type == "Polygon" else GeometryType.MULTI_POLYGON,
@@ -382,14 +426,19 @@ def generate_multiple_range_rings(
             label=f"{range_value:,.0f} {range_unit.value}",
         )
         layers.append(layer)
+        
+        report_progress(ring_end_pct, f"Ring {ring_idx + 1}/{num_ranges}: Complete")
     
-    # Get combined bounds
+    # Finalize (85% - 100%)
+    report_progress(0.86, "Calculating combined bounds...")
     combined = unary_union(all_geometries)
     bounds = get_geometry_bounds(combined)
     
+    report_progress(0.90, "Computing processing statistics...")
     # Calculate processing time
     processing_time = (time.time() - start_time) * 1000
     
+    report_progress(0.94, "Building metadata...")
     # Create metadata
     metadata = ExportMetadata(
         tool_type=OutputType.MULTIPLE_RANGE_RING,
@@ -402,7 +451,9 @@ def generate_multiple_range_rings(
         origin_type=input_data.origin_type.value,
     )
     
-    return RangeRingOutput(
+    report_progress(0.98, "Creating output object...")
+    
+    output = RangeRingOutput(
         output_type=OutputType.MULTIPLE_RANGE_RING,
         title="Multiple Range Rings",
         subtitle=origin_name,
@@ -413,6 +464,9 @@ def generate_multiple_range_rings(
         bbox=bounds,
         metadata=metadata,
     )
+    
+    report_progress(1.0, "Complete!")
+    return output
 
 
 def generate_reverse_range_ring(

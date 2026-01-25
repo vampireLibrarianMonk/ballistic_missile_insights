@@ -32,6 +32,86 @@ from app.ui.layout.global_state import (
     get_tool_state,
     clear_tool_outputs,
 )
+# =============================================================================
+# Shared Weapon System / Range Selection Helpers
+# =============================================================================
+def get_weapon_selection_and_range(
+    data_service,
+    country_code: str,
+    selected_weapon_name: str,
+) -> tuple[float | None, str]:
+    """
+    Get range value and legend label based on weapon selection.
+    
+    This is the core shared logic between Single and Multiple range ring tools.
+    Uses the working pattern from the Multiple Range Ring tool.
+    
+    Args:
+        data_service: Data service for weapon lookup
+        country_code: Country code for weapon systems lookup
+        selected_weapon_name: Currently selected weapon name from dropdown
+    
+    Returns:
+        Tuple of (range_value or None for manual, label_for_legend)
+        - range_value: float if weapon selected, None if manual entry
+        - label_for_legend: weapon name if selected, empty string if manual
+    """
+    if selected_weapon_name != "Manual Entry" and country_code:
+        weapon_range = data_service.get_weapon_range(selected_weapon_name, country_code)
+        range_value = weapon_range or 1000.0
+        label_for_legend = selected_weapon_name
+    else:
+        range_value = None  # Indicates manual entry
+        label_for_legend = ""
+    
+    return range_value, label_for_legend
+
+
+def render_range_input_with_weapon_key(
+    db_range_value: float | None,
+    stored_range_value: float,
+    selected_weapon_name: str,
+    key_prefix: str,
+    label_base: str = "Range Value",
+) -> float:
+    """
+    Render range input with unique key based on weapon selection.
+    
+    Uses unique keys including weapon name to force Streamlit to refresh
+    the value when switching between weapons. This is the working pattern
+    from the Multiple Range Ring tool.
+    
+    Args:
+        db_range_value: Range from database (None if manual entry)
+        stored_range_value: Previously stored manual value
+        selected_weapon_name: Currently selected weapon name
+        key_prefix: Unique prefix for widget key (e.g., "single", "multi_0")
+        label_base: Base label for the input (e.g., "Range Value", "Range 1")
+    
+    Returns:
+        The range value (either from database or user input)
+    """
+    if db_range_value is None:
+        # Manual entry - show stored value
+        return st.number_input(
+            label_base,
+            value=float(stored_range_value),
+            min_value=1.0,
+            step=100.0,
+            key=f"{key_prefix}_range_manual",
+        )
+    else:
+        # Weapon selected - key includes weapon name to force refresh on change
+        weapon_key = selected_weapon_name.replace(" ", "_").replace("-", "_")
+        return st.number_input(
+            f"{label_base} (override)",
+            value=float(db_range_value),
+            min_value=1.0,
+            step=100.0,
+            key=f"{key_prefix}_range_{weapon_key}",
+        )
+
+
 # Lazy import exports - will be loaded on demand, not at module load
 # This makes the UI load instantly
 _export_modules_loaded = False
@@ -250,8 +330,8 @@ def render_export_controls(output, tool_key: str) -> None:
             )
         
         with col3:
-            # PNG is slow - use status indicator
-            with st.spinner("Preparing PNG (may take a moment)..."):
+            # PNG - show status while preparing (no blocking delays)
+            with st.spinner("Preparing PNG..."):
                 png_data = _cached_png_export(output_id, output)
             st.download_button(
                 "📥 PNG",
@@ -262,8 +342,8 @@ def render_export_controls(output, tool_key: str) -> None:
             )
         
         with col4:
-            # PDF is slow - use status indicator
-            with st.spinner("Preparing PDF (may take a moment)..."):
+            # PDF - show status while preparing (no blocking delays)
+            with st.spinner("Preparing PDF..."):
                 pdf_data = _cached_pdf_export(output_id, output, include_metadata)
             st.download_button(
                 "📥 PDF",
@@ -326,22 +406,14 @@ def render_single_range_ring_tool() -> None:
                 range_value = None
         
         with col2:
-            if range_value is None:
-                range_value = st.number_input(
-                    "Range Value",
-                    value=1000.0,
-                    min_value=1.0,
-                    step=100.0,
-                    key="single_range_value",
-                )
-            else:
-                range_value = st.number_input(
-                    "Range Value (override)",
-                    value=float(range_value),
-                    min_value=1.0,
-                    step=100.0,
-                    key="single_range_override",
-                )
+            # Use shared range input function with weapon-based key
+            range_value = render_range_input_with_weapon_key(
+                db_range_value=range_value,
+                stored_range_value=1000.0,
+                selected_weapon_name=selected_weapon,
+                key_prefix="single",
+                label_base="Range Value",
+            )
             
             range_unit = st.selectbox(
                 "Distance Unit",
@@ -406,35 +478,44 @@ def render_single_range_ring_tool() -> None:
                 # Complete progress
                 progress_bar.progress(1.0, text="100% - Complete!")
                 
+                # Clear previous outputs and add new one
+                clear_tool_outputs("single_range_ring")
                 add_tool_output("single_range_ring", output)
-                st.success("Range ring generated!")
-                
-                # Display result
-                st.subheader(output.title)
-                if output.subtitle:
-                    st.caption(output.subtitle)
-                
-                # Render map with legend overlay
-                deck = render_range_ring_output(output, get_map_style())
-                render_map_with_legend(deck, output)
-                
-                # Analyst mode metadata
-                if is_analyst_mode():
-                    with st.expander("📊 Technical Metadata"):
-                        st.json({
-                            "output_id": str(output.output_id),
-                            "vertex_count": output.metadata.vertex_count,
-                            "processing_time_ms": output.metadata.processing_time_ms,
-                            "range_km": output.metadata.range_km,
-                            "range_classification": output.metadata.range_classification,
-                        })
-                
-                # Export controls
-                render_export_controls(output, "single_range_ring")
+                st.rerun()  # Rerun to render from session state
                 
             except Exception as e:
                 progress_bar.progress(1.0, text="Error!")
                 st.error(f"Error generating range ring: {e}")
+        
+        # Render output from session state (persists across reruns)
+        tool_state = get_tool_state("single_range_ring")
+        if tool_state.get("outputs"):
+            output = tool_state["outputs"][-1]  # Get latest output
+            
+            st.success("Range ring generated!")
+            
+            # Display result
+            st.subheader(output.title)
+            if output.subtitle:
+                st.caption(output.subtitle)
+            
+            # Render map with legend overlay
+            deck = render_range_ring_output(output, get_map_style())
+            render_map_with_legend(deck, output)
+            
+            # Analyst mode metadata
+            if is_analyst_mode():
+                with st.expander("📊 Technical Metadata"):
+                    st.json({
+                        "output_id": str(output.output_id),
+                        "vertex_count": output.metadata.vertex_count,
+                        "processing_time_ms": output.metadata.processing_time_ms,
+                        "range_km": output.metadata.range_km,
+                        "range_classification": output.metadata.range_classification,
+                    })
+            
+            # Export controls
+            render_export_controls(output, "single_range_ring")
 
 
 def render_multiple_range_ring_tool() -> None:
@@ -465,20 +546,74 @@ def render_multiple_range_ring_tool() -> None:
         
         st.markdown("**Add Ranges:**")
         
+        # Get available weapon systems for selected country (if country origin)
+        available_weapons = []
+        weapon_names = ["Manual Entry"]
+        if origin_type == "country" and country_code:
+            available_weapons = data_service.get_weapon_systems(country_code)
+            weapon_names = ["Manual Entry"] + [w['name'] for w in available_weapons]
+        
         # Dynamic range inputs
         if "multi_ranges" not in st.session_state:
-            st.session_state.multi_ranges = [{"value": 500, "unit": "km", "label": "SRBM"}]
+            st.session_state.multi_ranges = [{"value": 1000, "unit": "km", "weapon_name": "Manual Entry"}]
         
         ranges_to_remove = []
         for i, range_item in enumerate(st.session_state.multi_ranges):
-            col1, col2, col3, col4 = st.columns([2, 1, 2, 1])
+            col1, col2, col3, col4 = st.columns([3, 2, 1, 1])
+            
             with col1:
-                range_item["value"] = st.number_input(f"Range {i+1}", value=range_item["value"], key=f"multi_range_{i}")
+                # Weapon system selection - same pattern as single range ring
+                selected_weapon_name = st.selectbox(
+                    f"Weapon System {i+1}",
+                    options=weapon_names,
+                    index=weapon_names.index(range_item.get("weapon_name", "Manual Entry")) if range_item.get("weapon_name", "Manual Entry") in weapon_names else 0,
+                    key=f"multi_weapon_{i}",
+                )
+                range_item["weapon_name"] = selected_weapon_name
+                
+                # If weapon selected from database, get its range
+                if selected_weapon_name != "Manual Entry":
+                    weapon_range = data_service.get_weapon_range(selected_weapon_name, country_code)
+                    range_value = weapon_range or 1000.0
+                    range_item["label"] = selected_weapon_name
+                else:
+                    range_value = None
+                    range_item["label"] = ""
+            
             with col2:
-                range_item["unit"] = st.selectbox(f"Unit {i+1}", options=["km", "mi", "nm"], key=f"multi_unit_{i}")
+                # Range value - mirrors single range ring behavior exactly
+                # Key includes weapon name so switching weapons refreshes the value
+                if range_value is None:
+                    # Manual entry - show default or stored value
+                    range_item["value"] = st.number_input(
+                        f"Range {i+1}",
+                        value=float(range_item.get("value", 1000)),
+                        min_value=1.0,
+                        step=100.0,
+                        key=f"multi_range_manual_{i}",
+                    )
+                else:
+                    # Weapon selected - key includes weapon name to force refresh on change
+                    # Sanitize weapon name for key (remove spaces and special chars)
+                    weapon_key = selected_weapon_name.replace(" ", "_").replace("-", "_")
+                    range_item["value"] = st.number_input(
+                        f"Range {i+1} (override)",
+                        value=float(range_value),
+                        min_value=1.0,
+                        step=100.0,
+                        key=f"multi_range_{i}_{weapon_key}",
+                    )
+            
             with col3:
-                range_item["label"] = st.text_input(f"Label {i+1}", value=range_item.get("label", ""), key=f"multi_label_{i}")
+                range_item["unit"] = st.selectbox(
+                    f"Unit {i+1}",
+                    options=["km", "mi", "nm"],
+                    index=["km", "mi", "nm"].index(range_item.get("unit", "km")),
+                    key=f"multi_unit_{i}",
+                )
+            
             with col4:
+                st.write("")  # Spacing
                 if st.button("❌", key=f"multi_remove_{i}"):
                     ranges_to_remove.append(i)
         
@@ -486,7 +621,7 @@ def render_multiple_range_ring_tool() -> None:
             st.session_state.multi_ranges.pop(i)
         
         if st.button("➕ Add Range", key="multi_add_range"):
-            st.session_state.multi_ranges.append({"value": 1000, "unit": "km", "label": ""})
+            st.session_state.multi_ranges.append({"value": 1000, "unit": "km", "weapon_name": "Manual Entry"})
             st.rerun()
         
         resolution = st.selectbox("Resolution", options=["low", "normal", "high"], index=1, key="multi_resolution")
@@ -496,42 +631,86 @@ def render_multiple_range_ring_tool() -> None:
                 st.warning("Please add at least one range.")
                 return
             
-            with st.spinner("Generating range rings..."):
-                try:
-                    ranges = [
-                        (r["value"], DistanceUnit(r["unit"]), r.get("label"))
-                        for r in st.session_state.multi_ranges
-                    ]
+            # Create progress bar - updates come from the service
+            progress_bar = st.progress(0, text="0% - Initializing...")
+            
+            def update_progress(pct: float, msg: str):
+                """Callback to update progress bar from generate_multiple_range_rings."""
+                progress_bar.progress(min(pct, 1.0), text=f"{int(pct * 100)}% - {msg}")
+            
+            try:
+                # Build range tuples
+                ranges = [
+                    (r["value"], DistanceUnit(r["unit"]), r.get("label"))
+                    for r in st.session_state.multi_ranges
+                ]
+                
+                if origin_type == "country" and country_code:
+                    input_data = MultipleRangeRingInput(
+                        origin_type=OriginType.COUNTRY,
+                        country_code=country_code,
+                        ranges=ranges,
+                        resolution=resolution,
+                    )
+                    origin_geom = data_service.get_country_geometry(country_code)
                     
-                    if origin_type == "country" and country_code:
-                        input_data = MultipleRangeRingInput(
-                            origin_type=OriginType.COUNTRY,
-                            country_code=country_code,
-                            ranges=ranges,
-                            resolution=resolution,
-                        )
-                        origin_geom = data_service.get_country_geometry(country_code)
-                        output = generate_multiple_range_rings(input_data, origin_geom, country_name)
-                    else:
-                        poi = PointOfInterest(name=poi_name, latitude=lat, longitude=lon)
-                        input_data = MultipleRangeRingInput(
-                            origin_type=OriginType.POINT,
-                            origin_point=poi,
-                            ranges=ranges,
-                            resolution=resolution,
-                        )
-                        output = generate_multiple_range_rings(input_data)
+                    # Generate with progress callback - all updates come from the service
+                    output = generate_multiple_range_rings(
+                        input_data, origin_geom, country_name,
+                        progress_callback=update_progress
+                    )
+                else:
+                    poi = PointOfInterest(name=poi_name, latitude=lat, longitude=lon)
                     
-                    add_tool_output("multiple_range_ring", output)
-                    st.success("Range rings generated!")
+                    input_data = MultipleRangeRingInput(
+                        origin_type=OriginType.POINT,
+                        origin_point=poi,
+                        ranges=ranges,
+                        resolution=resolution,
+                    )
                     
-                    st.subheader(output.title)
-                    deck = render_range_ring_output(output, get_map_style())
-                    render_map_with_legend(deck, output)
-                    render_export_controls(output, "multiple_range_ring")
-                    
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                    # Generate with progress callback - all updates come from the service
+                    output = generate_multiple_range_rings(
+                        input_data,
+                        progress_callback=update_progress
+                    )
+                
+                # Clear previous outputs and add new one
+                clear_tool_outputs("multiple_range_ring")
+                add_tool_output("multiple_range_ring", output)
+                st.rerun()  # Rerun to render from session state
+                
+            except Exception as e:
+                progress_bar.progress(1.0, text="Error!")
+                st.error(f"Error: {e}")
+        
+        # Render output from session state (persists across reruns)
+        tool_state = get_tool_state("multiple_range_ring")
+        if tool_state.get("outputs"):
+            output = tool_state["outputs"][-1]  # Get latest output
+            
+            st.success("Range rings generated!")
+            
+            # Display result
+            st.subheader(output.title)
+            if output.subtitle:
+                st.caption(output.subtitle)
+            
+            # Render map with legend overlay
+            deck = render_range_ring_output(output, get_map_style())
+            render_map_with_legend(deck, output)
+            
+            # Analyst mode metadata
+            if is_analyst_mode():
+                with st.expander("📊 Technical Metadata"):
+                    st.json({
+                        "output_id": str(output.output_id),
+                        "layer_count": len(output.layers),
+                        "processing_time_ms": output.metadata.processing_time_ms if output.metadata else None,
+                    })
+            
+            # Export controls
+            render_export_controls(output, "multiple_range_ring")
 
 
 def render_reverse_range_ring_tool() -> None:
