@@ -966,6 +966,55 @@ def render_minimum_range_ring_tool() -> None:
                     geom_b = None
                 country_code_b = None
         
+        # Weapon System Reference Section
+        st.divider()
+        st.markdown("**Weapon System Reference (Optional):**")
+        st.caption("Select a country and weapon system to see its range for comparison.")
+        
+        col_ws1, col_ws2 = st.columns(2)
+        
+        with col_ws1:
+            # Country selection for weapon systems
+            ws_countries = data_service.get_country_list()
+            ws_country_name = st.selectbox(
+                "Country",
+                options=["-- Select Country --"] + ws_countries,
+                key="min_ws_country",
+            )
+            ws_country_code = data_service.get_country_code(ws_country_name) if ws_country_name != "-- Select Country --" else None
+        
+        with col_ws2:
+            # Weapon system selection with Name | Class | Range format
+            if ws_country_code:
+                weapons = data_service.get_weapon_systems(ws_country_code)
+                if weapons:
+                    # Build display options: "Name | Classification | Range km"
+                    weapon_options = []
+                    weapon_map = {}  # Map display string to weapon data
+                    for w in weapons:
+                        weapon_class = w.get("classification", "Unknown")
+                        weapon_range = w.get("range_km", 0)
+                        display_str = f"{w['name']} | {weapon_class} | {weapon_range:,.0f} km"
+                        weapon_options.append(display_str)
+                        weapon_map[display_str] = w
+                    
+                    selected_ws = st.selectbox(
+                        "Weapon System",
+                        options=weapon_options,
+                        key="min_ws_weapon",
+                    )
+                    
+                    # Show selected weapon details
+                    if selected_ws and selected_ws in weapon_map:
+                        ws_data = weapon_map[selected_ws]
+                        st.info(f"🎯 **{ws_data['name']}**: {ws_data.get('range_km', 0):,.0f} km range")
+                else:
+                    st.selectbox("Weapon System", options=["No weapons available"], key="min_ws_weapon_empty", disabled=True)
+            else:
+                st.selectbox("Weapon System", options=["Select a country first"], key="min_ws_weapon_placeholder", disabled=True)
+        
+        st.divider()
+        
         show_line = st.checkbox("Show minimum distance line", value=True, key="min_show_line")
         
         if st.button("🚀 Calculate Minimum Distance", key="min_generate"):
