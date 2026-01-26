@@ -1022,3 +1022,137 @@ def generate_custom_poi_range_ring(
         bbox=bounds,
         metadata=metadata,
     )
+
+
+def generate_custom_poi_range_ring_multi(
+    poi_data_list: list[dict],
+    resolution: str = "normal",
+) -> RangeRingOutput:
+    """
+    Generate range rings from custom points of interest where each POI has its own range settings.
+    
+    Args:
+        poi_data_list: List of dicts with keys: 'poi' (PointOfInterest), 'min_range', 'max_range', 'unit' (DistanceUnit)
+        resolution: Ring resolution ('low', 'normal', 'high')
+        
+    Returns:
+        RangeRingOutput containing the generated range ring(s)
+    """
+    start_time = time.time()
+    
+    layers = []
+    all_geometries = []
+    max_range_overall = 0.0
+    
+    # Generate rings for each POI with its own range settings
+    for i, poi_data in enumerate(poi_data_list):
+        poi = poi_data["poi"]
+        min_range = poi_data.get("min_range", 0.0)
+        max_range = poi_data.get("max_range", 1000.0)
+        unit = poi_data.get("unit", DistanceUnit.KILOMETERS)
+        
+        # Convert ranges to kilometers
+        max_range_km = convert_to_km(max_range, unit)
+        min_range_km = convert_to_km(min_range, unit) if min_range > 0 else 0
+        
+        max_range_overall = max(max_range_overall, max_range_km)
+        
+        # Create geometry
+        if min_range_km > 0:
+            # Create donut
+            ring_geometry = create_geodesic_donut(
+                poi.latitude, poi.longitude,
+                min_range_km, max_range_km,
+                num_points=360 if resolution == "high" else 180
+            )
+        else:
+            # Create solid circle
+            ring_geometry = create_geodesic_circle(
+                poi.latitude, poi.longitude, max_range_km,
+                num_points=360 if resolution == "high" else 180
+            )
+        
+        ring_geometry = make_geometry_valid(ring_geometry)
+        all_geometries.append(ring_geometry)
+        
+        # Create layer name with range info
+        if min_range_km > 0:
+            range_label = f"{min_range:,.0f}-{max_range:,.0f} {unit.value}"
+        else:
+            range_label = f"{max_range:,.0f} {unit.value}"
+        
+        layer_name = f"{poi.name} ({range_label})"
+        
+        layer = RangeRingLayer(
+            name=layer_name,
+            geometry_type=GeometryType.POLYGON,
+            geometry_geojson=geometry_to_geojson(ring_geometry),
+            fill_color=_get_color_for_range(max_range_km),
+            stroke_color=_get_color_for_range(max_range_km),
+            fill_opacity=0.2,
+            stroke_width=2.0,
+            range_km=max_range_km,
+            label=range_label,
+        )
+        layers.append(layer)
+        
+        # Add POI marker
+        poi_point = Point(poi.longitude, poi.latitude)
+        poi_layer = RangeRingLayer(
+            name=poi.name,
+            geometry_type=GeometryType.POINT,
+            geometry_geojson=geometry_to_geojson(poi_point),
+            fill_color="#000000",
+            stroke_color="#FFFFFF",
+            fill_opacity=1.0,
+            stroke_width=2.0,
+            label=poi.name,
+        )
+        layers.append(poi_layer)
+    
+    # Calculate center and bounds
+    if len(poi_data_list) == 1:
+        center_lat = poi_data_list[0]["poi"].latitude
+        center_lon = poi_data_list[0]["poi"].longitude
+    else:
+        # Use centroid of all POIs
+        center_lat = sum(p["poi"].latitude for p in poi_data_list) / len(poi_data_list)
+        center_lon = sum(p["poi"].longitude for p in poi_data_list) / len(poi_data_list)
+    
+    combined = unary_union(all_geometries)
+    bounds = get_geometry_bounds(combined)
+    
+    # Calculate processing time
+    processing_time = (time.time() - start_time) * 1000
+    
+    # Create metadata
+    range_class = classify_range(max_range_overall)
+    metadata = ExportMetadata(
+        tool_type=OutputType.CUSTOM_POI_RANGE_RING,
+        point_count=len(poi_data_list),
+        vertex_count=sum(count_vertices(g) for g in all_geometries),
+        processing_time_ms=processing_time,
+        resolution=resolution,
+        geodesic_method="geographiclib",
+        range_km=max_range_overall,
+        range_classification=range_class.value if range_class else None,
+    )
+    
+    # Create description listing all POIs
+    poi_names = [p["poi"].name for p in poi_data_list]
+    if len(poi_names) <= 3:
+        description = ", ".join(poi_names)
+    else:
+        description = f"{poi_names[0]}, {poi_names[1]}, and {len(poi_names) - 2} more"
+    
+    return RangeRingOutput(
+        output_type=OutputType.CUSTOM_POI_RANGE_RING,
+        title="Custom POI Range Rings",
+        subtitle=f"{len(poi_data_list)} POI(s)",
+        description=description,
+        layers=layers,
+        center_latitude=center_lat,
+        center_longitude=center_lon,
+        bbox=bounds,
+        metadata=metadata,
+    )

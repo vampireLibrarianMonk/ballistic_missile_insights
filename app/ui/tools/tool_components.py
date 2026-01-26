@@ -43,7 +43,7 @@ def get_weapon_selection_and_range(
 ) -> tuple[float | None, str]:
     """
     Get range value and legend label based on weapon selection.
-    
+
     This is the core shared logic between Single and Multiple range ring tools.
     Uses the working pattern from the Multiple Range Ring tool.
     
@@ -270,6 +270,8 @@ def render_map_with_legend(deck, output, height: int = 500) -> None:
     '''
     
     # Create legend overlay HTML to inject
+    # Legend expands upward from bottom-right corner and scrolls if too tall
+    # Max height leaves room for the Controls box (approx 70px) at top + margins
     legend_overlay = f'''
     <div id="legend-overlay" style="
         position: absolute;
@@ -281,6 +283,8 @@ def render_map_with_legend(deck, output, height: int = 500) -> None:
         padding: 8px 12px;
         box-shadow: 2px 2px 8px rgba(0,0,0,0.3);
         max-width: 260px;
+        max-height: calc(100% - 125px);
+        overflow-y: auto;
         z-index: 1000;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     ">
@@ -1037,39 +1041,219 @@ def render_custom_poi_tool() -> None:
     with st.expander("📍 Custom POI Range Ring Generator", expanded=False):
         st.markdown("""
         Generate minimum/maximum "donut" range rings from one or more user-defined points of interest.
+        Each POI has its own range settings.
         """)
         
+        # Initialize session state for POI list
         if "custom_pois" not in st.session_state:
-            st.session_state.custom_pois = []
+            st.session_state.custom_pois = []  # Each entry: {name, lat, lon, min_range, max_range, unit}
+        if "custom_poi_selected_idx" not in st.session_state:
+            st.session_state.custom_poi_selected_idx = None  # None = new entry mode
+        if "custom_poi_form_version" not in st.session_state:
+            st.session_state.custom_poi_form_version = 0  # Incremented to force new widgets
+        if "custom_poi_load_poi" not in st.session_state:
+            st.session_state.custom_poi_load_poi = None
+        if "custom_poi_prefill" not in st.session_state:
+            st.session_state.custom_poi_prefill = None  # Pre-fill values for edit mode
+        
+        # Generate unique key prefix based on form version
+        form_key = f"cpoi_v{st.session_state.custom_poi_form_version}"
+        
+        # Get prefill values (either from edit mode or defaults for add mode)
+        prefill = st.session_state.custom_poi_prefill or {}
+        default_name = prefill.get("name", "")
+        default_lat = prefill.get("lat", 0.0)
+        default_lon = prefill.get("lon", 0.0)
+        default_min_range = prefill.get("min_range", 0.0)
+        default_max_range = prefill.get("max_range", 1.0)
+        default_unit = prefill.get("unit", "km")
         
         st.markdown("**Points of Interest:**")
         
-        col1, col2, col3 = st.columns([2, 2, 1])
-        with col1:
-            new_name = st.text_input("POI Name", key="custom_new_name")
-        with col2:
-            new_lat = st.number_input("Lat", value=39.0, key="custom_new_lat")
-            new_lon = st.number_input("Lon", value=125.0, key="custom_new_lon")
-        with col3:
-            st.write("")
-            st.write("")
-            if st.button("➕ Add", key="custom_add_poi"):
-                if new_name:
-                    st.session_state.custom_pois.append({
-                        "name": new_name, "lat": new_lat, "lon": new_lon
-                    })
+        # Display existing POIs with radio buttons for selection
+        if st.session_state.custom_pois:
+            # Build display labels with range info
+            poi_options = ["➕ Add New POI"]
+            for poi in st.session_state.custom_pois:
+                min_r = poi.get('min_range', 0)
+                max_r = poi.get('max_range', 1000)
+                unit = poi.get('unit', 'km')
+                if min_r > 0:
+                    range_str = f"{min_r:,.0f}-{max_r:,.0f} {unit}"
+                else:
+                    range_str = f"{max_r:,.0f} {unit}"
+                poi_options.append(f"📍 {poi['name']} | {range_str} | (Lat: {poi['lat']:.4f}, Long: {poi['lon']:.4f})")
+            
+            # Determine current selection index (0 = new, 1+ = edit existing)
+            current_selection = 0 if st.session_state.custom_poi_selected_idx is None else st.session_state.custom_poi_selected_idx + 1
+            
+            selected_option = st.radio(
+                "Select POI to edit or add new:",
+                options=poi_options,
+                index=current_selection,
+                key="custom_poi_radio",
+                horizontal=False,
+            )
+            
+            # Determine which POI is selected
+            selected_idx = poi_options.index(selected_option)
+            if selected_idx == 0:
+                # Add new mode
+                if st.session_state.custom_poi_selected_idx is not None:
+                    # Switched from edit to add mode - increment version to get fresh widgets
+                    st.session_state.custom_poi_selected_idx = None
+                    st.session_state.custom_poi_prefill = None  # Clear prefill for add mode
+                    st.session_state.custom_poi_form_version += 1
                     st.rerun()
+                edit_mode = False
+                edit_idx = None
+            else:
+                # Edit existing mode
+                edit_idx = selected_idx - 1
+                if st.session_state.custom_poi_selected_idx != edit_idx:
+                    # Switched to different POI - load its values and increment version
+                    st.session_state.custom_poi_selected_idx = edit_idx
+                    poi = st.session_state.custom_pois[edit_idx]
+                    st.session_state.custom_poi_prefill = {
+                        "name": poi["name"],
+                        "lat": poi["lat"],
+                        "lon": poi["lon"],
+                        "min_range": poi.get("min_range", 0.0),
+                        "max_range": poi.get("max_range", 1000.0),
+                        "unit": poi.get("unit", "km"),
+                    }
+                    st.session_state.custom_poi_form_version += 1
+                    st.rerun()
+                edit_mode = True
+        else:
+            st.info("No POIs added yet. Add your first point of interest below.")
+            edit_mode = False
+            edit_idx = None
         
-        for i, poi in enumerate(st.session_state.custom_pois):
-            st.text(f"📍 {poi['name']} ({poi['lat']:.4f}, {poi['lon']:.4f})")
+        st.divider()
         
+        # Input form for adding/editing - use version-based keys to force clearing
+        if edit_mode:
+            st.markdown(f"**Editing: {st.session_state.custom_pois[edit_idx]['name']}**")
+        else:
+            st.markdown("**Add New POI:**")
+        
+        # Row 1: Name
+        poi_name = st.text_input(
+            "POI Name",
+            value=default_name,
+            key=f"{form_key}_name",
+        )
+        
+        # Row 2: Location
         col1, col2 = st.columns(2)
         with col1:
-            min_range = st.number_input("Min Range (0 for solid)", value=0.0, min_value=0.0, key="custom_min")
+            poi_lat = st.number_input(
+                "Latitude",
+                value=default_lat,
+                min_value=-90.0,
+                max_value=90.0,
+                key=f"{form_key}_lat",
+            )
         with col2:
-            max_range = st.number_input("Max Range", value=1000.0, min_value=1.0, key="custom_max")
+            poi_lon = st.number_input(
+                "Longitude",
+                value=default_lon,
+                min_value=-180.0,
+                max_value=180.0,
+                key=f"{form_key}_lon",
+            )
         
-        range_unit = st.selectbox("Unit", options=[u.value for u in DistanceUnit], key="custom_unit")
+        # Row 3: Range settings (per POI)
+        st.markdown("**Range Settings for this POI:**")
+        col3, col4, col5 = st.columns([2, 2, 1])
+        with col3:
+            poi_min_range = st.number_input(
+                "Min Range (0 for solid)",
+                value=default_min_range,
+                min_value=0.0,
+                key=f"{form_key}_min_range",
+            )
+        with col4:
+            poi_max_range = st.number_input(
+                "Max Range",
+                value=default_max_range,
+                min_value=1.0,
+                key=f"{form_key}_max_range",
+            )
+        with col5:
+            unit_options = [u.value for u in DistanceUnit]
+            unit_idx = unit_options.index(default_unit) if default_unit in unit_options else 0
+            poi_unit = st.selectbox(
+                "Unit",
+                options=unit_options,
+                index=unit_idx,
+                key=f"{form_key}_unit",
+            )
+        
+        # Action buttons
+        col_btn1, col_btn2 = st.columns(2)
+        
+        with col_btn1:
+            if edit_mode:
+                # Finalize (update) button when editing
+                if st.button("✅ Finalize", key="custom_finalize_poi", use_container_width=True):
+                    if poi_name:
+                        if poi_max_range <= poi_min_range and poi_min_range > 0:
+                            st.warning("Max range must be greater than min range.")
+                        else:
+                            st.session_state.custom_pois[edit_idx] = {
+                                "name": poi_name,
+                                "lat": poi_lat,
+                                "lon": poi_lon,
+                                "min_range": poi_min_range,
+                                "max_range": poi_max_range,
+                                "unit": poi_unit,
+                            }
+                            # Reset to add mode after finalizing - increment version for fresh widgets
+                            st.session_state.custom_poi_selected_idx = None
+                            st.session_state.custom_poi_prefill = None  # Clear prefill
+                            st.session_state.custom_poi_form_version += 1
+                            st.rerun()
+                    else:
+                        st.warning("Please enter a POI name.")
+            else:
+                # Add button when adding new
+                if st.button("➕ Add POI", key="custom_add_poi", use_container_width=True):
+                    if poi_name:
+                        if poi_max_range <= poi_min_range and poi_min_range > 0:
+                            st.warning("Max range must be greater than min range.")
+                        else:
+                            st.session_state.custom_pois.append({
+                                "name": poi_name,
+                                "lat": poi_lat,
+                                "lon": poi_lon,
+                                "min_range": poi_min_range,
+                                "max_range": poi_max_range,
+                                "unit": poi_unit,
+                            })
+                            # Clear form after adding - increment version for fresh widgets
+                            st.session_state.custom_poi_prefill = None  # Clear prefill
+                            st.session_state.custom_poi_form_version += 1
+                            st.rerun()
+                    else:
+                        st.warning("Please enter a POI name.")
+        
+        with col_btn2:
+            if edit_mode:
+                # Delete button when editing
+                if st.button("🗑️ Delete", key="custom_delete_poi", use_container_width=True, type="secondary"):
+                    st.session_state.custom_pois.pop(edit_idx)
+                    # Reset to add mode after deleting - increment version for fresh widgets
+                    st.session_state.custom_poi_selected_idx = None
+                    st.session_state.custom_poi_prefill = None  # Clear prefill
+                    st.session_state.custom_poi_form_version += 1
+                    st.rerun()
+        
+        st.divider()
+        
+        # Global settings
+        st.markdown("**Generation Settings:**")
         resolution = st.selectbox("Resolution", options=["low", "normal", "high"], index=1, key="custom_resolution")
         
         if st.button("🚀 Generate POI Rings", key="custom_generate"):
@@ -1079,29 +1263,51 @@ def render_custom_poi_tool() -> None:
             
             with st.spinner("Generating..."):
                 try:
-                    pois = [
-                        PointOfInterest(name=p["name"], latitude=p["lat"], longitude=p["lon"])
-                        for p in st.session_state.custom_pois
-                    ]
-                    input_data = CustomPOIRangeRingInput(
-                        points_of_interest=pois,
-                        min_range_value=min_range if min_range > 0 else None,
-                        max_range_value=max_range,
-                        range_unit=DistanceUnit(range_unit),
+                    from app.geometry.services import generate_custom_poi_range_ring_multi
+                    
+                    # Build list of POIs with their individual ranges
+                    poi_data_list = []
+                    for p in st.session_state.custom_pois:
+                        poi_data_list.append({
+                            "poi": PointOfInterest(name=p["name"], latitude=p["lat"], longitude=p["lon"]),
+                            "min_range": p.get("min_range", 0.0),
+                            "max_range": p.get("max_range", 1000.0),
+                            "unit": DistanceUnit(p.get("unit", "km")),
+                        })
+                    
+                    output = generate_custom_poi_range_ring_multi(
+                        poi_data_list=poi_data_list,
                         resolution=resolution,
                     )
-                    output = generate_custom_poi_range_ring(input_data)
                     
+                    clear_tool_outputs("custom_poi_range_ring")
                     add_tool_output("custom_poi_range_ring", output)
-                    st.success("POI rings generated!")
-                    
-                    st.subheader(output.title)
-                    deck = render_range_ring_output(output, get_map_style())
-                    st.pydeck_chart(deck)
-                    render_export_controls(output, "custom_poi_range_ring")
+                    st.rerun()
                     
                 except Exception as e:
                     st.error(f"Error: {e}")
+        
+        # Render output from session state (persists across reruns)
+        tool_state = get_tool_state("custom_poi_range_ring")
+        if tool_state.get("outputs"):
+            output = tool_state["outputs"][-1]
+            
+            st.success("POI rings generated!")
+            st.subheader(output.title)
+            st.caption(output.subtitle)
+            
+            deck = render_range_ring_output(output, get_map_style())
+            render_map_with_legend(deck, output)
+            
+            if is_analyst_mode():
+                with st.expander("📊 Technical Metadata"):
+                    st.json({
+                        "output_id": str(output.output_id),
+                        "processing_time_ms": output.metadata.processing_time_ms if output.metadata else None,
+                        "poi_count": output.metadata.point_count if output.metadata else None,
+                    })
+            
+            render_export_controls(output, "custom_poi_range_ring")
 
 
 def render_all_tools() -> None:
