@@ -61,29 +61,34 @@ def main() -> None:
         print(f"Source URL: {entry.get('link')}")
         print("Type:       Open-source missile-related news signal")
 
+        country = extract_country(entry.get('title'))
+        print(f"Country:     {country}")
+        city = extract_city(entry.get('title'))
+        print(f"City:     {city}")
+
         printed += 1
         if printed >= MAX_EVENTS:
             break
 
     print(f"\n[*] Printed {printed} BBC events")
 
-    # Fallback: no keyword events found — print latest 5 as samples
-    if not found_keyword_events:
-        print("\n[INFO] No keyword-matching events found. Printing latest 5 entries as samples.\n")
-
-        for entry in feed.entries[:5]:
-            print("\n-----------------------------")
-            print("Source:     BBC (SAMPLE)")
-            print(f"Published:  {parse_datetime(entry).isoformat()}")
-            print(f"Title:      {entry.get('title')}")
-            print(f"Summary:    {entry.get('summary','')[:300]}...")
-            print(f"Source URL: {entry.get('link')}")
-            print("Type:       Sample news event (no keyword match)")
-
-            country = extract_country(entry.get('title'))
-            print(f"Country:     {country}")
-            city = extract_city(entry.get('title'))
-            print(f"City:     {city}")
+    # # Fallback: no keyword events found — print latest 5 as samples
+    # if not found_keyword_events:
+    #     print("\n[INFO] No keyword-matching events found. Printing latest 5 entries as samples.\n")
+    #
+    #     for entry in feed.entries[:5]:
+    #         print("\n-----------------------------")
+    #         print("Source:     BBC (SAMPLE)")
+    #         print(f"Published:  {parse_datetime(entry).isoformat()}")
+    #         print(f"Title:      {entry.get('title')}")
+    #         print(f"Summary:    {entry.get('summary','')[:300]}...")
+    #         print(f"Source URL: {entry.get('link')}")
+    #         print("Type:       Sample news event (no keyword match)")
+    #
+    #         country = extract_country(entry.get('title'))
+    #         print(f"Country:     {country}")
+    #         city = extract_city(entry.get('title'))
+    #         print(f"City:     {city}")
 
 
 if __name__ == "__main__":
