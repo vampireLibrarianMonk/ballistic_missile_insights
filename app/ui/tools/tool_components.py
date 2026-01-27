@@ -33,6 +33,7 @@ from app.ui.layout.global_state import (
     get_tool_state,
     clear_tool_outputs,
 )
+from app.ui.tools.launch_trajectory.ui import render_launch_trajectory_tool
 # =============================================================================
 # Shared Weapon System / Range Selection Helpers
 # =============================================================================
@@ -1369,3 +1370,4 @@ def render_all_tools() -> None:
     render_reverse_range_ring_tool()
     render_minimum_range_ring_tool()
     render_custom_poi_tool()
+    render_launch_trajectory_tool()
