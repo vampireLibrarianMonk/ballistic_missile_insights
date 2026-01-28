@@ -717,6 +717,18 @@ def generate_reverse_range_ring(
     )
     layers.append(target_layer)
     
+    # Expand bounds to include the target point for proper map zoom
+    # This ensures the interactive map shows both the launch region AND the target city
+    report_progress(0.88, "Expanding bounds to include target location...")
+    if bounds:
+        min_lon, min_lat, max_lon, max_lat = bounds
+        # Expand bounds to include target point
+        expanded_min_lon = min(min_lon, target_lon)
+        expanded_min_lat = min(min_lat, target_lat)
+        expanded_max_lon = max(max_lon, target_lon)
+        expanded_max_lat = max(max_lat, target_lat)
+        bounds = (expanded_min_lon, expanded_min_lat, expanded_max_lon, expanded_max_lat)
+    
     # Calculate processing time
     report_progress(0.90, "Computing processing statistics...")
     processing_time = (time.time() - start_time) * 1000

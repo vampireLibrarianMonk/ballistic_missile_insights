@@ -19,6 +19,9 @@ ANALYTICAL_RESULTS_KEY = "analytical_results"
 SELECTED_NEWS_EVENT_KEY = "selected_news_event"
 NEWS_FILTERS_KEY = "news_filters"
 
+COMMAND_HISTORY_KEY = "command_history"
+COMMAND_OUTPUT_KEY = "command_output"
+COMMAND_REVERSE_PENDING_KEY = "command_reverse_pending"
 
 def init_session_state() -> None:
     """
@@ -55,6 +58,14 @@ def init_session_state() -> None:
             "range_classifications": [],
             "time_window": None,
         }
+
+    # Command center state
+    if COMMAND_HISTORY_KEY not in st.session_state:
+        st.session_state[COMMAND_HISTORY_KEY] = []
+    if COMMAND_OUTPUT_KEY not in st.session_state:
+        st.session_state[COMMAND_OUTPUT_KEY] = None
+    if COMMAND_REVERSE_PENDING_KEY not in st.session_state:
+        st.session_state[COMMAND_REVERSE_PENDING_KEY] = None
     
     # Tool-specific state initialization
     _init_tool_states()
@@ -171,6 +182,60 @@ def update_news_filter(key: str, value: Any) -> None:
     filters = get_news_filters()
     filters[key] = value
     st.session_state[NEWS_FILTERS_KEY] = filters
+
+
+# Command Center State Functions
+def get_command_history() -> list[dict]:
+    """Get the current command history list."""
+    return st.session_state.get(COMMAND_HISTORY_KEY, [])
+
+
+def add_command_history_entry(entry: dict) -> None:
+    """Add an entry to the command history (latest first)."""
+    history = get_command_history()
+    history.insert(0, entry)
+    st.session_state[COMMAND_HISTORY_KEY] = history
+
+
+def clear_command_history() -> None:
+    """Clear all command history entries."""
+    st.session_state[COMMAND_HISTORY_KEY] = []
+
+
+def update_command_history_entry(match_criteria: dict, updates: dict) -> bool:
+    """
+    Update an existing command history entry that matches the criteria.
+    Returns True if an entry was updated, False otherwise.
+    """
+    history = get_command_history()
+    for entry in history:
+        # Check if entry matches all criteria
+        matches = all(entry.get(k) == v for k, v in match_criteria.items())
+        if matches:
+            entry.update(updates)
+            st.session_state[COMMAND_HISTORY_KEY] = history
+            return True
+    return False
+
+
+def get_command_output():
+    """Get the current command output (RangeRingOutput or string response)."""
+    return st.session_state.get(COMMAND_OUTPUT_KEY)
+
+
+def set_command_output(output) -> None:
+    """Set the current command output."""
+    st.session_state[COMMAND_OUTPUT_KEY] = output
+
+
+def get_command_reverse_pending() -> Optional[dict]:
+    """Get the pending reverse range ring selection data."""
+    return st.session_state.get(COMMAND_REVERSE_PENDING_KEY)
+
+
+def set_command_reverse_pending(data: Optional[dict]) -> None:
+    """Set or clear the pending reverse range ring selection data."""
+    st.session_state[COMMAND_REVERSE_PENDING_KEY] = data
 
 
 # Tool State Functions

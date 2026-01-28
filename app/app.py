@@ -28,6 +28,7 @@ from app.ui.layout.global_state import init_session_state, get_map_style, get_ne
 from app.ui.layout.header import render_header, render_sidebar_header
 from app.ui.layout.mode_toggle import render_settings_panel
 from app.ui.tools.tool_components import render_all_tools
+from app.ui.command.command_center import render_command_center
 from app.rendering.pydeck_adapter import render_world_map
 from app.ui.news.news_feed import (
     NewsEvent, EventType, ConfidenceLevel, WeaponClass, NewsSource,
@@ -692,12 +693,19 @@ def main() -> None:
     render_header()
     
     # Create tabs for different sections
-    tab1, tab2 = st.tabs(["🌍 Situational Awareness", "📊 Analytical Tools"])
+    tab1, tab2, tab3 = st.tabs([
+        "⚡ Command",
+        "🌍 Situational Awareness",
+        "📊 Analytical Tools",
+    ])
     
     with tab1:
-        render_world_map_section()
-    
+        render_command_center()
+
     with tab2:
+        render_world_map_section()
+
+    with tab3:
         render_all_tools()
     
     # Footer

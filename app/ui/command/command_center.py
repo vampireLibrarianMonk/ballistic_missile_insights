@@ -1,0 +1,1321 @@
+"""
+Command Center UI for ORRG.
+Provides a Google-like intent-driven interface for queries and taskings.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Optional, Union
+import re
+
+from difflib import get_close_matches
+
+import streamlit as st
+
+from app.models.outputs import RangeRingOutput
+from app.models.inputs import PointOfInterest, ReverseRangeRingInput, DistanceUnit
+from app.geometry.services import generate_reverse_range_ring
+from app.geometry.utils import geodesic_distance
+from app.data.loaders import get_data_service
+from app.rendering.pydeck_adapter import render_range_ring_output
+from app.ui.layout.global_state import (
+    get_map_style,
+    get_command_history,
+    add_command_history_entry,
+    update_command_history_entry,
+    clear_command_history,
+    get_command_output,
+    set_command_output,
+    get_command_reverse_pending,
+    set_command_reverse_pending,
+)
+from app.ui.tools.tool_components import render_map_with_legend
+import streamlit.components.v1 as components
+import base64
+
+
+CommandOutput = Union[RangeRingOutput, str, None]
+
+
+class CommandParsingError(Exception):
+    """Raised when command parsing fails."""
+
+
+def _normalize_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip().lower())
+
+
+def _fuzzy_match(name: str, options: list[str], cutoff: float = 0.75) -> Optional[str]:
+    if not name or not options:
+        return None
+    normalized_options = {opt.lower(): opt for opt in options}
+    matches = get_close_matches(name.lower(), normalized_options.keys(), n=1, cutoff=cutoff)
+    if matches:
+        return normalized_options[matches[0]]
+    return None
+
+
+def _extract_reverse_range_request(text: str) -> Optional[tuple[str, str]]:
+    """Extract shooter country and target city from a reverse range ring command."""
+    normalized = _normalize_text(text)
+    synonyms = r"reverse range ring|reverse ring|launch envelope|reverse range"
+    prepositions = r"from|within|inside"
+    target_words = r"against|to|toward|towards"
+    pattern = (
+        rf"(?:generate|create|build|show)?\s*(?:a\s+)?"
+        rf"(?:{synonyms})\s+"
+        rf"(?:{prepositions})\s+(?P<country>.+?)\s+"
+        rf"(?:{target_words})\s+(?P<city>.+?)\.?$"
+    )
+    match = re.search(pattern, normalized)
+    if not match:
+        return None
+    country_raw = match.group("country")
+    city_raw = match.group("city")
+    if not country_raw or not city_raw:
+        return None
+    return country_raw.strip(), city_raw.strip()
+
+
+def _generate_reverse_range_output(country_name: str, city_name: str) -> RangeRingOutput:
+    data_service = get_data_service()
+
+    countries = data_service.get_country_list()
+    cities = data_service.get_city_list()
+
+    matched_country = _fuzzy_match(country_name, countries, cutoff=0.6)
+    matched_city = _fuzzy_match(city_name, cities, cutoff=0.6)
+
+    if not matched_country:
+        raise CommandParsingError(f"Unable to match shooter country '{country_name}'.")
+    if not matched_city:
+        raise CommandParsingError(f"Unable to match target city '{city_name}'.")
+
+    country_code = data_service.get_country_code(matched_country)
+    if not country_code:
+        raise CommandParsingError(f"Could not resolve ISO code for '{matched_country}'.")
+
+    target_coords = data_service.get_city_coordinates(matched_city)
+    if not target_coords:
+        raise CommandParsingError(f"Could not resolve coordinates for '{matched_city}'.")
+
+    return _generate_reverse_range_output_with_weapon(matched_country, matched_city, country_code, target_coords)
+
+
+def _generate_reverse_range_output_with_weapon(
+    country_name: str,
+    city_name: str,
+    country_code: str,
+    target_coords: tuple[float, float],
+    weapon: Optional[dict] = None,
+    progress_callback: Optional[callable] = None,
+) -> RangeRingOutput:
+    data_service = get_data_service()
+    weapons = data_service.get_weapon_systems(country_code)
+    if not weapons:
+        raise CommandParsingError(f"No weapon systems found for {country_name}.")
+
+    selected_weapon = weapon or max(weapons, key=lambda w: w.get("range_km", 0))
+    range_km = selected_weapon.get("range_km", 0)
+    if range_km <= 0:
+        raise CommandParsingError(f"Weapon range data unavailable for {country_name}.")
+
+    target_poi = PointOfInterest(name=city_name, latitude=target_coords[0], longitude=target_coords[1])
+
+    input_data = ReverseRangeRingInput(
+        target_point=target_poi,
+        range_value=range_km,
+        range_unit=DistanceUnit.KILOMETERS,
+        weapon_system=selected_weapon.get("name"),
+        resolution="normal",
+    )
+
+    threat_geometry = data_service.get_country_geometry(country_code)
+    if threat_geometry is None:
+        raise CommandParsingError(f"Could not load geometry for {country_name}.")
+
+    return generate_reverse_range_ring(
+        input_data,
+        threat_country_geometry=threat_geometry,
+        threat_country_name=country_name,
+        progress_callback=progress_callback,
+    )
+
+
+def _build_weapon_selection_message(country_name: str, weapons: list[dict]) -> str:
+    lines = [
+        f"**Weapon systems available for {country_name}:**",
+        "Select a system by replying with: `Select reverse weapon #`.",
+        "",
+    ]
+
+    for idx, weapon in enumerate(weapons, start=1):
+        name = weapon.get("name", "Unknown")
+        range_km = weapon.get("range_km", 0)
+        classification = weapon.get("classification", "")
+        label = f"{idx}. {name} — {range_km:,.0f} km"
+        if classification:
+            label += f" ({classification})"
+        lines.append(label)
+
+    return "\n".join(lines)
+
+
+def _extract_reverse_weapon_selection(text: str) -> Optional[int]:
+    normalized = _normalize_text(text)
+    match = re.search(r"select reverse weapon\s*(?P<index>\d+)", normalized)
+    if match:
+        return int(match.group("index"))
+    return None
+
+
+def _clear_export_cache() -> None:
+    """Clear any cached export data from session state."""
+    keys_to_remove = [k for k in st.session_state.keys() if k.startswith("command_exports_")]
+    for key in keys_to_remove:
+        del st.session_state[key]
+
+
+def _clear_product_viewer() -> None:
+    """
+    Clear the product viewer back to its original state.
+    Export cache is preserved so history entries can still use cached exports.
+    """
+    set_command_output(None)
+
+
+def _update_pending_history_entry(
+    country_name: str,
+    city_name: str,
+    weapon_name: str,
+    weapon_range: float,
+    final_status: str,
+    output: Optional[RangeRingOutput] = None,
+) -> None:
+    """
+    Update the pending reverse range ring history entry with completion details.
+    Consolidates both steps into one history entry with full context.
+    """
+    updates = {
+        "status": final_status,
+        "text": f"Reverse range ring: {country_name} → {city_name} using {weapon_name} ({weapon_range:,.0f} km)",
+        "weapon_name": weapon_name,
+        "weapon_range_km": weapon_range,
+        "shooter_country": country_name,
+        "target_city": city_name,
+    }
+    
+    # Store the output for later export generation
+    if output is not None:
+        updates["output"] = output
+    
+    # Find and update the pending entry for this reverse range ring task
+    update_command_history_entry(
+        match_criteria={
+            "resolution": "Reverse Range Ring",
+            "status": "Pending",
+        },
+        updates=updates
+    )
+
+
+def _render_cached_export_links(output, tool_key: str) -> None:
+    """Render export download links from cache (no generation, instant display)."""
+    output_id = str(output.output_id)
+    cache_key = f"command_exports_{output_id}"
+    
+    if cache_key not in st.session_state:
+        st.warning("Cache not found. Please regenerate exports.")
+        return
+    
+    cached = st.session_state[cache_key]
+    base_name = f"{tool_key}_{output_id}"
+    
+    export_html = f"""
+    <style>
+        .export-container {{ margin: 10px 0; }}
+        .export-btn {{
+            display: inline-block;
+            padding: 8px 16px;
+            margin: 4px;
+            background-color: #ffffff;
+            border: 1px solid #d3d3d3;
+            border-radius: 4px;
+            color: #262730;
+            text-decoration: none;
+            font-family: "Source Sans Pro", sans-serif;
+            font-size: 14px;
+            font-weight: 400;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            min-width: 100px;
+            text-align: center;
+        }}
+        .export-btn:hover {{ border-color: #ff4b4b; color: #ff4b4b; }}
+        .export-btn:active {{ background-color: #f0f2f6; }}
+        .export-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 8px; }}
+        .export-title {{ font-size: 14px; font-weight: 600; color: #262730; margin-bottom: 8px; }}
+    </style>
+    <div class="export-container">
+        <div class="export-title">📥 Download Options (cached)</div>
+        <div class="export-grid">
+            <a class="export-btn" href="data:application/geo+json;base64,{cached['geojson_b64']}" download="{base_name}.geojson">📥 GeoJSON</a>
+            <a class="export-btn" href="data:application/vnd.google-earth.kmz;base64,{cached['kmz_b64']}" download="{base_name}.kmz">📥 KMZ</a>
+            <a class="export-btn" href="data:image/png;base64,{cached['png_b64']}" download="{base_name}.png">📥 PNG</a>
+            <a class="export-btn" href="data:application/pdf;base64,{cached['pdf_b64']}" download="{base_name}.pdf">📥 PDF</a>
+        </div>
+    </div>
+    """
+    
+    components.html(export_html, height=100)
+
+
+def _render_js_export_controls(output, tool_key: str) -> None:
+    """Render JavaScript-based export controls that don't cause page refresh."""
+    from app.ui.layout.global_state import is_analyst_mode
+    
+    # Lazy load export modules
+    from app.exports.geojson import export_to_geojson_string
+    from app.exports.kmz import export_to_kmz_bytes
+    from app.exports.png import export_to_png_bytes
+    from app.exports.pdf import export_to_pdf_bytes
+    
+    include_metadata = is_analyst_mode()
+    output_id = str(output.output_id)
+    
+    # Cache key for this output's exports
+    cache_key = f"command_exports_{output_id}"
+    
+    # Check if we already have cached export data for this output
+    if cache_key in st.session_state:
+        cached = st.session_state[cache_key]
+        geojson_b64 = cached["geojson_b64"]
+        kmz_b64 = cached["kmz_b64"]
+        png_b64 = cached["png_b64"]
+        pdf_b64 = cached["pdf_b64"]
+    else:
+        # Show loading status while generating exports
+        status_placeholder = st.empty()
+        
+        # Loading HTML with animated spinner
+        loading_html = """
+        <style>
+            .loading-container {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                padding: 12px 16px;
+                background: linear-gradient(90deg, #f0f2f6 0%, #e8eaef 50%, #f0f2f6 100%);
+                background-size: 200% 100%;
+                animation: shimmer 1.5s ease-in-out infinite;
+                border-radius: 4px;
+                margin: 10px 0;
+            }
+            @keyframes shimmer {
+                0% { background-position: 200% 0; }
+                100% { background-position: -200% 0; }
+            }
+            .loading-spinner {
+                width: 20px;
+                height: 20px;
+                border: 2px solid #d3d3d3;
+                border-top: 2px solid #ff4b4b;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+            }
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+            .loading-text {
+                font-family: "Source Sans Pro", sans-serif;
+                font-size: 14px;
+                color: #262730;
+            }
+            .loading-status {
+                font-size: 12px;
+                color: #666;
+                margin-left: auto;
+            }
+        </style>
+        <div class="loading-container">
+            <div class="loading-spinner"></div>
+            <span class="loading-text">📥 Preparing Download Options...</span>
+            <span class="loading-status" id="export-status">Generating exports...</span>
+        </div>
+        """
+        
+        status_placeholder.markdown(loading_html, unsafe_allow_html=True)
+        
+        # Generate export data without artificial delays for faster performance
+        # GeoJSON and KMZ are fast (no map rendering)
+        geojson_data = export_to_geojson_string(output, include_metadata=include_metadata)
+        kmz_data = export_to_kmz_bytes(output, include_metadata=include_metadata)
+        
+        # PNG and PDF share the same SVG rendering - import optimized function
+        from app.exports.png import render_svg_with_template
+        import cairosvg
+        
+        # Render SVG once and reuse for both PNG and PDF
+        svg_content = render_svg_with_template(output, classification="UNCLASSIFIED")
+        svg_bytes = svg_content.encode("utf-8")
+        
+        # Generate PNG from cached SVG
+        png_data = cairosvg.svg2png(
+            bytestring=svg_bytes,
+            output_width=1400,
+            output_height=900,
+            dpi=100,
+            background_color="white",
+        )
+        
+        # Generate PDF from cached SVG
+        pdf_data = cairosvg.svg2pdf(bytestring=svg_bytes)
+        
+        # Base64 encode
+        geojson_b64 = base64.b64encode(geojson_data.encode('utf-8')).decode('utf-8')
+        kmz_b64 = base64.b64encode(kmz_data).decode('utf-8')
+        png_b64 = base64.b64encode(png_data).decode('utf-8')
+        pdf_b64 = base64.b64encode(pdf_data).decode('utf-8')
+        
+        # Cache the encoded data
+        st.session_state[cache_key] = {
+            "geojson_b64": geojson_b64,
+            "kmz_b64": kmz_b64,
+            "png_b64": png_b64,
+            "pdf_b64": pdf_b64,
+        }
+        
+        # Clear the loading placeholder
+        status_placeholder.empty()
+    
+    # File names
+    base_name = f"{tool_key}_{output_id}"
+    
+    # Create HTML with styled download links
+    export_html = f"""
+    <style>
+        .export-container {{
+            margin: 10px 0;
+        }}
+        .export-btn {{
+            display: inline-block;
+            padding: 8px 16px;
+            margin: 4px;
+            background-color: #ffffff;
+            border: 1px solid #d3d3d3;
+            border-radius: 4px;
+            color: #262730;
+            text-decoration: none;
+            font-family: "Source Sans Pro", sans-serif;
+            font-size: 14px;
+            font-weight: 400;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            min-width: 100px;
+            text-align: center;
+        }}
+        .export-btn:hover {{
+            border-color: #ff4b4b;
+            color: #ff4b4b;
+        }}
+        .export-btn:active {{
+            background-color: #f0f2f6;
+        }}
+        .export-grid {{
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin-top: 8px;
+        }}
+        .export-title {{
+            font-size: 14px;
+            font-weight: 600;
+            color: #262730;
+            margin-bottom: 8px;
+        }}
+    </style>
+    <div class="export-container">
+        <div class="export-title">📥 Download Options</div>
+        <div class="export-grid">
+            <a class="export-btn" href="data:application/geo+json;base64,{geojson_b64}" download="{base_name}.geojson">📥 GeoJSON</a>
+            <a class="export-btn" href="data:application/vnd.google-earth.kmz;base64,{kmz_b64}" download="{base_name}.kmz">📥 KMZ</a>
+            <a class="export-btn" href="data:image/png;base64,{png_b64}" download="{base_name}.png">📥 PNG</a>
+            <a class="export-btn" href="data:application/pdf;base64,{pdf_b64}" download="{base_name}.pdf">📥 PDF</a>
+        </div>
+    </div>
+    """
+    
+    components.html(export_html, height=100)
+
+
+def _render_input_panel() -> Optional[str]:
+    """Render the user input panel and return the submitted text if any."""
+    pending = get_command_reverse_pending()
+
+    st.caption("Ask a question • Issue a task • Generate analysis • Get answers")
+
+    # If there's a pending reverse range ring selection, show Step 2 UI
+    if pending:
+        st.markdown("### 🔄 Step 2: Select Weapon System")
+        st.info(
+            f"**Reverse Range Ring in progress**\n\n"
+            f"Shooter: **{pending.get('country_name')}** → Target: **{pending.get('city_name')}**"
+        )
+
+        weapons = pending.get("weapons", [])
+        weapon_labels = [
+            f"{idx}. {w.get('name', 'Unknown')} — {w.get('range_km', 0):,.0f} km"
+            for idx, w in enumerate(weapons, start=1)
+        ]
+
+        selected_label = st.selectbox(
+            "Choose a weapon system:",
+            options=weapon_labels,
+            index=0,
+            key="weapon_select_dropdown",
+        )
+
+        confirm_btn = st.button("✅ Confirm Selection", key="confirm_weapon", use_container_width=True)
+
+        # Reset Execution Query button - only show when there's output to clear
+        if get_command_output() is not None:
+            st.divider()
+            if st.button("🔄 Reset Execution Query", key="reset_execution_query_step2", use_container_width=True):
+                _clear_product_viewer()
+                st.rerun()
+
+        if confirm_btn and selected_label:
+            # Extract selection index from label
+            sel_idx = weapon_labels.index(selected_label) + 1
+            return f"Select reverse weapon {sel_idx}"
+
+        return None
+
+    # Step 1: Normal input panel using a form for Ctrl+Enter submission
+    st.markdown("### 📝 Step 1: Enter Command")
+
+    with st.form(key="command_form", clear_on_submit=True):
+        query_text = st.text_area(
+            "Command input",
+            placeholder="Type a question or task... (Ctrl+Enter to submit)",
+            height=120,
+            key="command_input_text",
+            label_visibility="collapsed",
+        )
+
+        st.markdown("**Examples:**")
+        st.markdown(
+            "\n".join(
+                [
+                    "- \"Show recent missile launches in East Asia.\"",
+                    "- \"Generate a reverse range ring from Iran against Tel Aviv.\"",
+                    "- \"Summarize the missile systems Iran operates.\"",
+                    "- \"Create a minimum range ring between North Korea and South Korea.\"",
+                ]
+            )
+        )
+
+        executed = st.form_submit_button("⚙️ Execute Command", use_container_width=True)
+
+    if executed and query_text and query_text.strip():
+        return query_text.strip()
+
+    if executed:
+        st.warning("Please enter a question or task before submitting.")
+    return None
+
+
+def _render_product_output_viewer() -> None:
+    """Render the product output viewer (collapsible) with clear functionality."""
+    output = get_command_output()
+
+    with st.expander("🗺️ Product Output Viewer", expanded=output is not None):
+        if output is None:
+            st.info("No output generated yet. Run a query or task to see results here.")
+            return
+
+        if isinstance(output, RangeRingOutput):
+            st.subheader(output.title)
+            if output.subtitle:
+                st.caption(output.subtitle)
+            if output.description:
+                st.markdown(f"*{output.description}*")
+
+            deck = render_range_ring_output(output, get_map_style())
+            render_map_with_legend(deck, output)
+            _render_js_export_controls(output, "command_output")
+        else:
+            st.markdown("### Answer")
+            st.markdown(output)
+        
+        # Add reset button at the bottom of the viewer
+        st.divider()
+        if st.button("🔄 Reset Execution Query", key="reset_execution_query", use_container_width=True):
+            _clear_product_viewer()
+            st.rerun()
+
+
+def _render_reverse_range_ring_validator() -> None:
+    """Render JavaScript-based real-time validation widget for Reverse Range Ring commands."""
+    import json
+    
+    # Get the country and city lists for validation
+    data_service = get_data_service()
+    countries = data_service.get_country_list()
+    cities = data_service.get_city_list()
+    
+    # Keep original case for display, lowercase for matching
+    countries_display_json = json.dumps(sorted(countries))
+    cities_display_json = json.dumps(sorted(cities))
+    countries_json = json.dumps([c.lower() for c in countries])
+    cities_json = json.dumps([c.lower() for c in cities])
+    
+    validator_html = f"""
+    <style>
+        .rrr-validator {{
+            font-family: "Source Sans Pro", sans-serif;
+            background: #f8f9fa;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 12px;
+            margin: 10px 0;
+        }}
+        .rrr-validator-title {{
+            font-size: 13px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+        }}
+        .rrr-section {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 0;
+            font-size: 13px;
+        }}
+        .rrr-icon {{
+            width: 18px;
+            height: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+        }}
+        .rrr-valid {{ color: #28a745; }}
+        .rrr-invalid {{ color: #dc3545; }}
+        .rrr-warning {{ color: #ffc107; }}
+        .rrr-pending {{ color: #6c757d; }}
+        .rrr-label {{
+            color: #555;
+            min-width: 100px;
+        }}
+        .rrr-value {{
+            color: #333;
+            font-weight: 500;
+        }}
+        .rrr-match {{
+            color: #28a745;
+            font-size: 11px;
+            margin-left: 4px;
+        }}
+        .rrr-hint {{
+            font-size: 11px;
+            color: #888;
+            font-style: italic;
+            margin-top: 8px;
+        }}
+        /* Lookup section styles */
+        .rrr-lookup-section {{
+            margin-top: 12px;
+            padding-top: 10px;
+            border-top: 1px solid #e0e0e0;
+        }}
+        .rrr-lookup-title {{
+            font-size: 12px;
+            font-weight: 600;
+            color: #555;
+            margin-bottom: 8px;
+        }}
+        .rrr-lookup-row {{
+            display: flex;
+            gap: 12px;
+            margin-bottom: 8px;
+        }}
+        .rrr-lookup-col {{
+            flex: 1;
+        }}
+        .rrr-lookup-label {{
+            font-size: 11px;
+            color: #666;
+            margin-bottom: 4px;
+        }}
+        .rrr-search-input {{
+            width: 100%;
+            padding: 6px 8px;
+            font-size: 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }}
+        .rrr-search-input:focus {{
+            outline: none;
+            border-color: #ff4b4b;
+        }}
+        .rrr-suggestions {{
+            max-height: 150px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: white;
+            margin-top: 4px;
+            display: none;
+            scrollbar-width: thin;
+            scrollbar-color: #888 #f0f0f0;
+        }}
+        .rrr-suggestions::-webkit-scrollbar {{
+            width: 8px;
+        }}
+        .rrr-suggestions::-webkit-scrollbar-track {{
+            background: #f0f0f0;
+            border-radius: 4px;
+        }}
+        .rrr-suggestions::-webkit-scrollbar-thumb {{
+            background: #888;
+            border-radius: 4px;
+        }}
+        .rrr-suggestions::-webkit-scrollbar-thumb:hover {{
+            background: #666;
+        }}
+        .rrr-suggestions.active {{
+            display: block;
+        }}
+        .rrr-suggestion {{
+            padding: 6px 8px;
+            font-size: 11px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+        }}
+        .rrr-suggestion:last-child {{
+            border-bottom: none;
+        }}
+        .rrr-suggestion:hover {{
+            background: #f0f2f6;
+        }}
+        .rrr-suggestion-match {{
+            background: #fff3cd;
+        }}
+        .rrr-no-results {{
+            padding: 6px 8px;
+            font-size: 11px;
+            color: #888;
+            font-style: italic;
+        }}
+    </style>
+    <div class="rrr-validator" id="rrr-validator-widget">
+        <div class="rrr-validator-title">📋 Query Validator</div>
+        <div class="rrr-section" id="rrr-verb">
+            <span class="rrr-icon rrr-pending" id="rrr-verb-icon">○</span>
+            <span class="rrr-label">Action:</span>
+            <span class="rrr-value" id="rrr-verb-value">—</span>
+        </div>
+        <div class="rrr-section" id="rrr-type">
+            <span class="rrr-icon rrr-pending" id="rrr-type-icon">○</span>
+            <span class="rrr-label">Ring Type:</span>
+            <span class="rrr-value" id="rrr-type-value">—</span>
+        </div>
+        <div class="rrr-section" id="rrr-from">
+            <span class="rrr-icon rrr-pending" id="rrr-from-icon">○</span>
+            <span class="rrr-label">Preposition:</span>
+            <span class="rrr-value" id="rrr-from-value">—</span>
+        </div>
+        <div class="rrr-section" id="rrr-country">
+            <span class="rrr-icon rrr-pending" id="rrr-country-icon">○</span>
+            <span class="rrr-label">Country:</span>
+            <span class="rrr-value" id="rrr-country-value">—</span>
+        </div>
+        <div class="rrr-section" id="rrr-target">
+            <span class="rrr-icon rrr-pending" id="rrr-target-icon">○</span>
+            <span class="rrr-label">Target Prep:</span>
+            <span class="rrr-value" id="rrr-target-value">—</span>
+        </div>
+        <div class="rrr-section" id="rrr-city">
+            <span class="rrr-icon rrr-pending" id="rrr-city-icon">○</span>
+            <span class="rrr-label">City:</span>
+            <span class="rrr-value" id="rrr-city-value">—</span>
+        </div>
+        <div class="rrr-hint" id="rrr-hint">Type your command above to see validation...</div>
+        
+        <!-- Lookup Section -->
+        <div class="rrr-lookup-section">
+            <div class="rrr-lookup-title">🔍 Name Lookup (search to find exact format)</div>
+            <div class="rrr-lookup-row">
+                <div class="rrr-lookup-col">
+                    <div class="rrr-lookup-label">Country Search:</div>
+                    <input type="text" class="rrr-search-input" id="rrr-country-search" placeholder="Type to search countries..." autocomplete="off">
+                    <div class="rrr-suggestions" id="rrr-country-suggestions"></div>
+                </div>
+                <div class="rrr-lookup-col">
+                    <div class="rrr-lookup-label">City Search:</div>
+                    <input type="text" class="rrr-search-input" id="rrr-city-search" placeholder="Type to search cities..." autocomplete="off">
+                    <div class="rrr-suggestions" id="rrr-city-suggestions"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        (function() {{
+            // Valid options
+            const validVerbs = ['generate', 'create', 'build', 'show'];
+            const validTypes = ['reverse range ring', 'reverse ring', 'launch envelope', 'reverse range'];
+            const validFromPreps = ['from', 'within', 'inside'];
+            const validTargetPreps = ['against', 'to', 'toward', 'towards'];
+            const validCountries = {countries_json};
+            const validCities = {cities_json};
+            const countriesDisplay = {countries_display_json};
+            const citiesDisplay = {cities_display_json};
+            
+            // Fuzzy match function with multiple match types
+            function fuzzyMatch(input, options) {{
+                if (!input) return null;
+                const lower = input.toLowerCase().trim();
+                // Exact match first
+                if (options.includes(lower)) return lower;
+                // Prefix match
+                const prefixMatch = options.find(opt => opt.startsWith(lower));
+                if (prefixMatch) return prefixMatch;
+                // Contains match (also check if any word in option starts with input)
+                for (const opt of options) {{
+                    const words = opt.split(/[\\s,]+/);
+                    for (const word of words) {{
+                        if (word.startsWith(lower) || lower.startsWith(word)) {{
+                            return opt;
+                        }}
+                    }}
+                }}
+                // General contains
+                const containsMatch = options.find(opt => opt.includes(lower) || lower.includes(opt));
+                return containsMatch || null;
+            }}
+            
+            // Get fuzzy matches for suggestions (returns multiple)
+            function getFuzzyMatches(input, displayOptions, maxResults = 10) {{
+                if (!input || input.length < 1) return displayOptions.slice(0, maxResults);
+                const lower = input.toLowerCase().trim();
+                const results = [];
+                
+                // Score each option
+                const scored = displayOptions.map(opt => {{
+                    const optLower = opt.toLowerCase();
+                    let score = 0;
+                    
+                    // Exact match = highest
+                    if (optLower === lower) score = 100;
+                    // Starts with = high
+                    else if (optLower.startsWith(lower)) score = 80;
+                    // Word in option starts with input
+                    else {{
+                        const words = optLower.split(/[\\s,]+/);
+                        for (const word of words) {{
+                            if (word.startsWith(lower)) {{
+                                score = 70;
+                                break;
+                            }}
+                        }}
+                    }}
+                    // Contains anywhere
+                    if (score === 0 && optLower.includes(lower)) score = 50;
+                    // Input contains option word
+                    if (score === 0) {{
+                        const words = optLower.split(/[\\s,]+/);
+                        for (const word of words) {{
+                            if (lower.includes(word) && word.length > 2) {{
+                                score = 40;
+                                break;
+                            }}
+                        }}
+                    }}
+                    
+                    return {{ opt, score }};
+                }});
+                
+                return scored
+                    .filter(s => s.score > 0)
+                    .sort((a, b) => b.score - a.score)
+                    .slice(0, maxResults)
+                    .map(s => s.opt);
+            }}
+            
+            // valid: 'exact' | 'fuzzy' | false | null
+            function setStatus(id, valid, value, matched) {{
+                const icon = document.getElementById(id + '-icon');
+                const valueEl = document.getElementById(id + '-value');
+                if (!icon || !valueEl) return;
+                
+                if (valid === 'exact') {{
+                    icon.textContent = '✓';
+                    icon.className = 'rrr-icon rrr-valid';
+                }} else if (valid === 'fuzzy') {{
+                    icon.textContent = '⚠';
+                    icon.className = 'rrr-icon rrr-warning';
+                }} else if (valid === false) {{
+                    icon.textContent = '✗';
+                    icon.className = 'rrr-icon rrr-invalid';
+                }} else {{
+                    icon.textContent = '○';
+                    icon.className = 'rrr-icon rrr-pending';
+                }}
+                
+                if (value && matched && matched !== value.toLowerCase()) {{
+                    valueEl.innerHTML = value + '<span class="rrr-match"> (use: ' + matched + ')</span>';
+                }} else {{
+                    valueEl.textContent = value || '—';
+                }}
+            }}
+            
+            function parseAndValidate(text) {{
+                const hint = document.getElementById('rrr-hint');
+                if (!text || text.trim().length < 3) {{
+                    ['rrr-verb', 'rrr-type', 'rrr-from', 'rrr-country', 'rrr-target', 'rrr-city'].forEach(id => {{
+                        setStatus(id, null, '—');
+                    }});
+                    if (hint) hint.textContent = 'Type your command above to see validation...';
+                    return;
+                }}
+                
+                const lower = text.toLowerCase().trim();
+                
+                // Verb validation
+                let verbMatch = validVerbs.find(v => lower.startsWith(v));
+                setStatus('rrr-verb', verbMatch ? 'exact' : false, verbMatch || (lower.split(' ')[0] || ''), verbMatch);
+                
+                // Type validation
+                let typeMatch = validTypes.find(t => lower.includes(t));
+                setStatus('rrr-type', typeMatch ? 'exact' : false, typeMatch || '—', typeMatch);
+                
+                // From preposition validation
+                let fromMatch = validFromPreps.find(p => {{
+                    const typeEnd = typeMatch ? lower.indexOf(typeMatch) + typeMatch.length : 0;
+                    return lower.indexOf(' ' + p + ' ', typeEnd) >= 0;
+                }});
+                setStatus('rrr-from', fromMatch ? 'exact' : false, fromMatch || '—', fromMatch);
+                
+                let country = null;
+                let city = null;
+                let targetPrep = null;
+                
+                if (fromMatch && typeMatch) {{
+                    const fromIdx = lower.indexOf(' ' + fromMatch + ' ');
+                    if (fromIdx >= 0) {{
+                        const afterFrom = lower.substring(fromIdx + fromMatch.length + 2);
+                        for (const tp of validTargetPreps) {{
+                            const tpIdx = afterFrom.indexOf(' ' + tp + ' ');
+                            if (tpIdx >= 0) {{
+                                targetPrep = tp;
+                                country = afterFrom.substring(0, tpIdx).trim();
+                                city = afterFrom.substring(tpIdx + tp.length + 2).trim().replace(/\\.$/, '');
+                                break;
+                            }}
+                        }}
+                    }}
+                }}
+                
+                // Country validation: exact vs fuzzy vs no match
+                let countryStatus = false;
+                let countryMatch = null;
+                if (country) {{
+                    const countryLower = country.toLowerCase();
+                    if (validCountries.includes(countryLower)) {{
+                        countryStatus = 'exact';
+                        countryMatch = countryLower;
+                    }} else {{
+                        countryMatch = fuzzyMatch(country, validCountries);
+                        if (countryMatch) {{
+                            countryStatus = 'fuzzy';  // Found fuzzy match but not exact
+                        }}
+                    }}
+                }}
+                setStatus('rrr-country', countryStatus, country || '—', countryMatch);
+                
+                // Target prep validation
+                setStatus('rrr-target', targetPrep ? 'exact' : false, targetPrep || '—', targetPrep);
+                
+                // City validation: exact vs fuzzy vs no match
+                let cityStatus = false;
+                let cityMatch = null;
+                if (city) {{
+                    const cityLower = city.toLowerCase();
+                    if (validCities.includes(cityLower)) {{
+                        cityStatus = 'exact';
+                        cityMatch = cityLower;
+                    }} else {{
+                        cityMatch = fuzzyMatch(city, validCities);
+                        if (cityMatch) {{
+                            cityStatus = 'fuzzy';  // Found fuzzy match but not exact
+                        }}
+                    }}
+                }}
+                setStatus('rrr-city', cityStatus, city || '—', cityMatch);
+                
+                // Check overall validity
+                const allExact = verbMatch && typeMatch && fromMatch && (countryStatus === 'exact') && targetPrep && (cityStatus === 'exact');
+                const allValid = verbMatch && typeMatch && fromMatch && countryMatch && targetPrep && cityMatch;
+                const hasFuzzy = (countryStatus === 'fuzzy') || (cityStatus === 'fuzzy');
+                const partialValid = typeMatch || countryMatch || cityMatch;
+                
+                if (allExact) {{
+                    if (hint) hint.textContent = '✅ Query looks valid! Click Execute to proceed.';
+                }} else if (allValid && hasFuzzy) {{
+                    if (hint) hint.textContent = '⚠️ Query may work, but check ⚠ items for exact format.';
+                }} else if (partialValid) {{
+                    if (hint) hint.textContent = '⚠️ Some fields need attention. Check the items marked with ✗ or ⚠';
+                }} else {{
+                    if (hint) hint.textContent = 'Format: Generate a reverse range ring from [Country] against [City]';
+                }}
+            }}
+            
+            // Setup lookup search boxes
+            function setupLookup(inputId, suggestionsId, displayOptions) {{
+                const input = document.getElementById(inputId);
+                const suggestions = document.getElementById(suggestionsId);
+                if (!input || !suggestions) return;
+                
+                input.addEventListener('input', function() {{
+                    const val = this.value;
+                    const matches = getFuzzyMatches(val, displayOptions, 10);
+                    
+                    if (matches.length > 0) {{
+                        suggestions.innerHTML = matches.map(m => 
+                            '<div class="rrr-suggestion">' + m + '</div>'
+                        ).join('');
+                        suggestions.classList.add('active');
+                    }} else {{
+                        suggestions.innerHTML = '<div class="rrr-no-results">No matches found</div>';
+                        suggestions.classList.add('active');
+                    }}
+                }});
+                
+                input.addEventListener('focus', function() {{
+                    if (this.value.length >= 1 || suggestions.innerHTML) {{
+                        suggestions.classList.add('active');
+                    }}
+                }});
+                
+                input.addEventListener('blur', function() {{
+                    setTimeout(() => suggestions.classList.remove('active'), 200);
+                }});
+                
+                suggestions.addEventListener('click', function(e) {{
+                    if (e.target.classList.contains('rrr-suggestion')) {{
+                        input.value = e.target.textContent;
+                        suggestions.classList.remove('active');
+                    }}
+                }});
+            }}
+            
+            // Initialize lookup boxes
+            setupLookup('rrr-country-search', 'rrr-country-suggestions', countriesDisplay);
+            setupLookup('rrr-city-search', 'rrr-city-suggestions', citiesDisplay);
+            
+            function attachListener() {{
+                const textareas = window.parent.document.querySelectorAll('textarea');
+                for (const ta of textareas) {{
+                    if (ta.placeholder && ta.placeholder.includes('Type a question')) {{
+                        ta.addEventListener('input', function(e) {{
+                            parseAndValidate(e.target.value);
+                        }});
+                        parseAndValidate(ta.value);
+                        return true;
+                    }}
+                }}
+                return false;
+            }}
+            
+            let attempts = 0;
+            const maxAttempts = 20;
+            const tryAttach = setInterval(function() {{
+                attempts++;
+                if (attachListener() || attempts >= maxAttempts) {{
+                    clearInterval(tryAttach);
+                }}
+            }}, 200);
+        }})();
+    </script>
+    """
+    
+    components.html(validator_html, height=430)
+
+
+def _render_help_section() -> None:
+    """Render the Command Center help section with tabbed tool help."""
+    with st.expander("❓ Help", expanded=False):
+        # Create tabs for each tool
+        tab_rrr, tab_single, tab_multi, tab_min, tab_poi, tab_traj = st.tabs([
+            "🔄 Reverse Range Ring",
+            "🎯 Single Range Ring",
+            "📊 Multiple Range Ring",
+            "📏 Minimum Range Ring",
+            "📍 Custom POI",
+            "🚀 Launch Trajectory"
+        ])
+        
+        with tab_rrr:
+            st.markdown("**Reverse Range Ring Task**")
+            st.markdown(
+                "Use the format: `Generate a {reverse range ring|reverse ring|launch envelope|reverse range} "
+                "from {Country} {against|to|toward|towards} {City}.`"
+            )
+            st.markdown(
+                "Then respond with `Select reverse weapon #` using the number from the returned list to generate "
+                "the reverse range ring output and export options."
+            )
+            # Add the real-time validator widget
+            _render_reverse_range_ring_validator()
+        
+        with tab_single:
+            st.markdown("**Single Range Ring** — slug: `single_range_ring`")
+            st.markdown("*Coming Soon*")
+            st.markdown("Generate a single range ring from a country or point of interest.")
+            st.code("Generate a single range ring from [Country] with range [X] km")
+        
+        with tab_multi:
+            st.markdown("**Multiple Range Ring** — slug: `multiple_range_ring`")
+            st.markdown("*Coming Soon*")
+            st.markdown("Generate multiple concentric range rings from a country or point.")
+            st.code("Generate multiple range rings from [Country] at 500, 1000, 1500 km")
+        
+        with tab_min:
+            st.markdown("**Minimum Range Ring** — slug: `minimum_range_ring`")
+            st.markdown("*Coming Soon*")
+            st.markdown("Calculate the minimum distance between two countries or cities.")
+            st.code("Calculate minimum distance between [Country A] and [Country B]")
+        
+        with tab_poi:
+            st.markdown("**Custom POI Range Ring** — slug: `custom_poi_range_ring`")
+            st.markdown("*Coming Soon*")
+            st.markdown("Generate range rings from custom points of interest.")
+            st.code("Generate range ring from lat [X] lon [Y] with range [Z] km")
+        
+        with tab_traj:
+            st.markdown("**Launch Trajectory** — slug: `launch_trajectory`")
+            st.markdown("*Coming Soon*")
+            st.markdown("Visualize ballistic missile launch trajectories.")
+            st.code("Show launch trajectory from [Origin] to [Target]")
+
+
+def _render_history() -> None:
+    """Render command query/task history in reverse chronological order."""
+    history = get_command_history()
+    with st.expander("📜 Query & Task History", expanded=False):
+        if not history:
+            st.info("No command history yet.")
+            return
+
+        # Clear history button at the top - direct clear without export cache iteration
+        if st.button("🗑️ Clear History", key="clear_history_btn", use_container_width=True):
+            clear_command_history()
+            st.rerun()
+        
+        st.divider()
+
+        for idx, entry in enumerate(history):
+            timestamp = entry.get("timestamp", "Unknown time")
+            entry_type = entry.get("type", "Query")
+            text = entry.get("text", "")
+            resolution = entry.get("resolution", "Pending")
+            status = entry.get("status", "Pending")
+            entry_output = entry.get("output")
+            
+            # Clean up status display
+            display_status = status.replace(" (Updated)", "")
+
+            st.markdown(f"**{timestamp} | {entry_type}**")
+            st.markdown(f"\"{text}\"")
+            
+            # Show extra details for reverse range ring entries
+            if resolution == "Reverse Range Ring":
+                weapon_name = entry.get("weapon_name")
+                weapon_range = entry.get("weapon_range_km")
+                shooter = entry.get("shooter_country")
+                target = entry.get("target_city")
+                
+                if weapon_name and shooter and target:
+                    st.caption(f"🎯 {shooter} → {target}")
+                    st.caption(f"🚀 {weapon_name} ({weapon_range:,.0f} km)")
+            
+            st.caption(f"Resolution: {resolution}")
+            st.caption(f"Status: {display_status}")
+            
+            # Export section - uses expander (no rerun needed) with lazy generation
+            if entry_output is not None and isinstance(entry_output, RangeRingOutput):
+                output_id = str(entry_output.output_id)
+                cache_key = f"command_exports_{output_id}"
+                is_cached = cache_key in st.session_state
+                
+                with st.expander(f"📥 Export Options {'(cached)' if is_cached else ''}", expanded=False):
+                    if is_cached:
+                        # Cached - show downloads immediately (no generation needed)
+                        _render_cached_export_links(entry_output, f"history_{idx}")
+                    else:
+                        # Not cached - show generate button
+                        st.caption("Exports not yet generated for this entry.")
+                        if st.button("⚡ Generate Exports", key=f"gen_exports_{idx}", use_container_width=True):
+                            _render_js_export_controls(entry_output, f"history_{idx}")
+            
+            st.divider()
+
+
+def _mock_intent_response(query: str) -> tuple[CommandOutput, str, str]:
+    """Return a placeholder response until full intent routing is implemented."""
+    pending = get_command_reverse_pending()
+    selection = _extract_reverse_weapon_selection(query)
+    if pending and selection:
+        weapons = pending.get("weapons", [])
+        selected_index = selection - 1
+        if 0 <= selected_index < len(weapons):
+            weapon = weapons[selected_index]
+            weapon_name = weapon.get("name", "Unknown")
+            weapon_range = weapon.get("range_km", 0)
+            
+            # Create progress bar - same as analytical tool
+            progress_bar = st.progress(0, text="0% - Initializing...")
+            
+            def update_progress(pct: float, status: str):
+                """Callback to update progress bar from generate_reverse_range_ring."""
+                progress_bar.progress(min(pct, 1.0), text=f"{int(pct * 100)}% - {status}")
+            
+            try:
+                output = _generate_reverse_range_output_with_weapon(
+                    pending["country_name"],
+                    pending["city_name"],
+                    pending["country_code"],
+                    pending["target_coords"],
+                    weapon,
+                    progress_callback=update_progress,
+                )
+                progress_bar.progress(1.0, text="100% - Complete!")
+                
+                # Update the pending history entry with completion details and output
+                _update_pending_history_entry(
+                    pending["country_name"],
+                    pending["city_name"],
+                    weapon_name,
+                    weapon_range,
+                    "Completed",
+                    output=output,
+                )
+                
+                set_command_reverse_pending(None)
+                return output, "Reverse Range Ring", "Completed (Updated)"
+            except CommandParsingError as exc:
+                progress_bar.progress(1.0, text="Error!")
+                return f"**Command Center Error**\n\n{exc}", "Reverse Range Ring", "Failed"
+        return (
+            "**Selection Error**\n\nPlease reply with a valid weapon number from the list.",
+            "Reverse Range Ring",
+            "Pending",
+        )
+
+    reverse_request = _extract_reverse_range_request(query)
+    if reverse_request:
+        country, city = reverse_request
+        try:
+            data_service = get_data_service()
+            matched_country = _fuzzy_match(country, data_service.get_country_list(), cutoff=0.6)
+            matched_city = _fuzzy_match(city, data_service.get_city_list(), cutoff=0.6)
+            if not matched_country or not matched_city:
+                raise CommandParsingError("Could not match country or city in request.")
+
+            country_code = data_service.get_country_code(matched_country)
+            target_coords = data_service.get_city_coordinates(matched_city)
+            weapons = data_service.get_weapon_systems(country_code) if country_code else []
+            if not country_code or not target_coords or not weapons:
+                raise CommandParsingError("Missing country, target, or weapon data for selection step.")
+
+            country_geometry = data_service.get_country_geometry(country_code)
+            if country_geometry is None:
+                raise CommandParsingError("Could not load shooter country geometry.")
+
+            # Estimate minimum distance from shooter country to target city
+            min_distance_km = None
+            try:
+                from app.geometry.utils import _extract_all_coordinates
+                coords_list = _extract_all_coordinates(country_geometry)
+                min_distance_km = min(
+                    geodesic_distance(lat, lon, target_coords[0], target_coords[1])
+                    for lon, lat in coords_list[:500]
+                )
+            except Exception:
+                min_distance_km = None
+
+            if min_distance_km is not None:
+                weapons = [w for w in weapons if w.get("range_km", 0) >= min_distance_km]
+
+            if not weapons:
+                return (
+                    "**No viable weapon systems found**\n\n"
+                    f"None of the listed systems for {matched_country} can reach {matched_city}. "
+                    "This task cannot proceed.",
+                    "Reverse Range Ring",
+                    "Failed",
+                )
+
+            set_command_reverse_pending(
+                {
+                    "country_name": matched_country,
+                    "city_name": matched_city,
+                    "country_code": country_code,
+                    "target_coords": target_coords,
+                    "weapons": weapons,
+                }
+            )
+
+            message = _build_weapon_selection_message(matched_country, weapons)
+            return message, "Reverse Range Ring", "Pending"
+        except CommandParsingError as exc:
+            return f"**Command Center Error**\n\n{exc}", "Reverse Range Ring", "Failed"
+
+    response = (
+        "**Answer Summary (Placeholder)**\n\n"
+        f"You asked: **{query}**.\n\n"
+        "The Command Center is ready to route this request to the appropriate analytical tool or summary "
+        "pipeline once intent classification is connected."
+    )
+    return response, "Command Center Placeholder", "Answered"
+
+
+def render_command_center() -> None:
+    """Render the Command tab page layout."""
+    st.header("⚡ ORRG – Command Center")
+
+    query = _render_input_panel()
+    if query:
+        output, resolution, status = _mock_intent_response(query)
+
+        # Only update command output for completed or failed tasks, not pending
+        if status != "Pending":
+            set_command_output(output)
+
+        # Only add a new history entry if we're not updating an existing one
+        # "Completed (Updated)" means we already updated the pending entry
+        if status != "Completed (Updated)":
+            add_command_history_entry(
+                {
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "type": "Task" if resolution == "Reverse Range Ring" else "Query",
+                    "text": query,
+                    "resolution": resolution,
+                    "status": status,
+                }
+            )
+
+        # If a pending state was just set, rerun to show Step 2 UI immediately
+        if status == "Pending" and get_command_reverse_pending() is not None:
+            st.rerun()
+
+    _render_help_section()
+    _render_product_output_viewer()
+    _render_history()
