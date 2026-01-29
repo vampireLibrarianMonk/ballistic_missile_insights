@@ -88,21 +88,11 @@
                     statusIcon.textContent = '';
                     statusText.textContent = M.validatorValid;
                     statusHint.textContent = '';
-                } else if (result.allValid && result.hasFuzzy) {
-                    statusBar.className = 'cmd-status-bar cmd-status-empty';
-                    statusIcon.textContent = '';
-                    statusText.textContent = M.validatorFuzzy;
-                    statusHint.textContent = '';
-                } else if (result.partialValid) {
-                    statusBar.className = 'cmd-status-bar cmd-status-empty';
-                    statusIcon.textContent = '';
-                    statusText.textContent = M.validatorAttention;
-                    statusHint.textContent = '';
                 } else {
                     statusBar.className = 'cmd-status-bar cmd-status-empty';
-                    statusIcon.textContent = '⚠️';
-                    statusText.textContent = M.reverseFormat;
-                    statusHint.textContent = M.seeHelp(result.toolName);
+                    statusIcon.textContent = '';
+                    statusText.textContent = `⚠️ ${M.reverseFormat} ${M.seeHelp(result.toolName)}`;
+                    statusHint.textContent = '';
                 }
             } else if (cmdType.hasVerb && cmdType.hasSingle) {
                 // Validate as Single Range Ring using shared validator
@@ -113,45 +103,25 @@
                     statusIcon.textContent = '';
                     statusText.textContent = M.validatorValid;
                     statusHint.textContent = '';
-                } else if (result.allValid && result.hasFuzzy) {
-                    statusBar.className = 'cmd-status-bar cmd-status-empty';
-                    statusIcon.textContent = '';
-                    statusText.textContent = M.validatorFuzzy;
-                    statusHint.textContent = '';
-                } else if (result.partialValid) {
-                    statusBar.className = 'cmd-status-bar cmd-status-empty';
-                    statusIcon.textContent = '';
-                    statusText.textContent = M.validatorAttention;
-                    statusHint.textContent = '';
                 } else {
                     statusBar.className = 'cmd-status-bar cmd-status-empty';
-                    statusIcon.textContent = '⚠️';
-                    statusText.textContent = M.singleFormat;
-                    statusHint.textContent = M.seeHelp(result.toolName);
+                    statusIcon.textContent = '';
+                    statusText.textContent = `⚠️ ${M.singleFormat} ${M.seeHelp(result.toolName)}`;
+                    statusHint.textContent = '';
                 }
             } else if (cmdType.hasVerb && cmdType.hasMinimum) {
                 const result = V.validateMinimum(lower);
 
-                if (result.allValid && result.hasFuzzy) {
-                    statusBar.className = 'cmd-status-bar cmd-status-empty';
-                    statusIcon.textContent = '';
-                    statusText.textContent = M.validatorFuzzy;
-                    statusHint.textContent = '';
-                } else if (result.allExact) {
+                if (result.allExact) {
                     statusBar.className = 'cmd-status-bar cmd-status-valid';
                     statusIcon.textContent = '';
                     statusText.textContent = M.validatorValid;
                     statusHint.textContent = '';
-                } else if (result.partialValid) {
-                    statusBar.className = 'cmd-status-bar cmd-status-empty';
-                    statusIcon.textContent = '';
-                    statusText.textContent = M.validatorAttention;
-                    statusHint.textContent = '';
                 } else {
                     statusBar.className = 'cmd-status-bar cmd-status-empty';
-                    statusIcon.textContent = '⚠️';
-                    statusText.textContent = M.minimumFormat;
-                    statusHint.textContent = M.seeHelp(result.toolName);
+                    statusIcon.textContent = '';
+                    statusText.textContent = `⚠️ ${M.minimumFormat} ${M.seeHelp(result.toolName)}`;
+                    statusHint.textContent = '';
                 }
             } else if (cmdType.hasVerb) {
                 statusBar.className = 'cmd-status-bar cmd-status-partial';
