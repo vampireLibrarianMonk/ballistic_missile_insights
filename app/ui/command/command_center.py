@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Optional, Union
+import os
 import re
 
 from difflib import get_close_matches
@@ -14,8 +15,21 @@ from difflib import get_close_matches
 import streamlit as st
 
 from app.models.outputs import RangeRingOutput
-from app.models.inputs import PointOfInterest, ReverseRangeRingInput, DistanceUnit
-from app.geometry.services import generate_reverse_range_ring
+from shapely.geometry import Point
+
+from app.models.inputs import (
+    PointOfInterest,
+    ReverseRangeRingInput,
+    SingleRangeRingInput,
+    MinimumRangeRingInput,
+    DistanceUnit,
+    OriginType,
+)
+from app.geometry.services import (
+    generate_reverse_range_ring,
+    generate_single_range_ring,
+    calculate_minimum_distance,
+)
 from app.geometry.utils import geodesic_distance
 from app.data.loaders import get_data_service
 from app.rendering.pydeck_adapter import render_range_ring_output
@@ -29,6 +43,10 @@ from app.ui.layout.global_state import (
     set_command_output,
     get_command_reverse_pending,
     set_command_reverse_pending,
+    get_command_single_pending,
+    set_command_single_pending,
+    get_command_minimum_pending,
+    set_command_minimum_pending,
 )
 from app.ui.tools.tool_components import render_map_with_legend
 import streamlit.components.v1 as components
@@ -170,6 +188,283 @@ def _extract_reverse_weapon_selection(text: str) -> Optional[int]:
     return None
 
 
+# ============================================================================
+# Minimum Range Ring Functions
+# ============================================================================
+
+def _extract_minimum_range_request(text: str) -> Optional[tuple[str, str]]:
+    """Extract two location names from a minimum range ring command."""
+    normalized = _normalize_text(text)
+    synonyms = r"minimum range ring|minimum distance|min distance|min range"
+    prepositions = r"between|from"
+    target_words = r"and|to"
+    pattern = (
+        rf"(?:calculate|compute|generate|show)?\s*(?:a\s+)?"
+        rf"(?:{synonyms})\s+"
+        rf"(?:{prepositions})\s+(?P<location_a>.+?)\s+"
+        rf"(?:{target_words})\s+(?P<location_b>.+?)\.?$"
+    )
+    match = re.search(pattern, normalized)
+    if not match:
+        return None
+    location_a = match.group("location_a")
+    location_b = match.group("location_b")
+    if not location_a or not location_b:
+        return None
+    return location_a.strip(), location_b.strip()
+
+
+def _extract_minimum_location_type(text: str) -> Optional[str]:
+    """Extract the minimum range ring location type selection."""
+    normalized = _normalize_text(text)
+    match = re.search(r"select minimum type\s*(countries|cities)", normalized)
+    if match:
+        return match.group(1).lower()
+    return None
+
+
+def _build_minimum_location_type_message() -> str:
+    """Build the minimum range ring location type selection message."""
+    return "\n".join(
+        [
+            "**Minimum Range Ring setup**",
+            "Select the location type to analyze by replying with:",
+            "- `Select minimum type countries`",
+            "- `Select minimum type cities`",
+        ]
+    )
+
+
+def _build_minimum_location_selection_message(location_type: str, locations: list[str]) -> str:
+    """Build a numbered selection list for minimum range ring locations."""
+    label = "Countries" if location_type == "countries" else "Cities"
+    lines = [
+        f"**{label} available:**",
+        "Select the two locations by replying with:",
+        "`Select minimum locations # and #`",
+        "",
+    ]
+    for idx, location in enumerate(locations, start=1):
+        lines.append(f"{idx}. {location}")
+    return "\n".join(lines)
+
+
+def _extract_minimum_location_selection(text: str) -> Optional[tuple[int, int]]:
+    """Extract two selection indexes from minimum location selection command."""
+    normalized = _normalize_text(text)
+    match = re.search(
+        r"select minimum locations\s*(?P<first>\d+)\s*(?:and|,)\s*(?P<second>\d+)",
+        normalized,
+    )
+    if match:
+        return int(match.group("first")), int(match.group("second"))
+    return None
+
+
+def _generate_minimum_range_output(
+    location_type: str,
+    location_a: str,
+    location_b: str,
+    progress_callback: Optional[callable] = None,
+) -> tuple[RangeRingOutput, float]:
+    """Generate Minimum Range Ring output for the selected locations."""
+    data_service = get_data_service()
+
+    if location_type == "countries":
+        country_code_a = data_service.get_country_code(location_a)
+        country_code_b = data_service.get_country_code(location_b)
+        if not country_code_a or not country_code_b:
+            raise CommandParsingError("Could not resolve ISO codes for selected countries.")
+        geometry_a = data_service.get_country_geometry(country_code_a)
+        geometry_b = data_service.get_country_geometry(country_code_b)
+        if geometry_a is None or geometry_b is None:
+            raise CommandParsingError("Could not load geometry for one or more countries.")
+    else:
+        coords_a = data_service.get_city_coordinates(location_a)
+        coords_b = data_service.get_city_coordinates(location_b)
+        if not coords_a or not coords_b:
+            raise CommandParsingError("Could not resolve coordinates for one or more cities.")
+        geometry_a = Point(coords_a[1], coords_a[0])
+        geometry_b = Point(coords_b[1], coords_b[0])
+        country_code_a = None
+        country_code_b = None
+
+    input_data = MinimumRangeRingInput(
+        country_code_a=country_code_a,
+        country_code_b=country_code_b,
+        show_minimum_line=True,
+        show_buffer_rings=False,
+    )
+
+    output, result = calculate_minimum_distance(
+        input_data,
+        geometry_a,
+        geometry_b,
+        location_a,
+        location_b,
+        progress_callback=progress_callback,
+    )
+    return output, result.distance_km
+
+
+def _update_minimum_pending_history_entry(
+    location_type: str,
+    location_a: str,
+    location_b: str,
+    distance_km: float,
+    final_status: str,
+    output: Optional[RangeRingOutput] = None,
+) -> None:
+    """Update the pending minimum range ring history entry with completion details."""
+    display_type = "Countries" if location_type == "countries" else "Cities"
+    updates = {
+        "status": final_status,
+        "text": (
+            f"Minimum range ring ({display_type}): {location_a} ↔ {location_b} "
+            f"({distance_km:,.1f} km)"
+        ),
+        "minimum_distance_km": distance_km,
+        "location_type": location_type,
+        "location_a": location_a,
+        "location_b": location_b,
+    }
+
+    if output is not None:
+        updates["output"] = output
+
+    update_command_history_entry(
+        match_criteria={
+            "resolution": "Minimum Range Ring",
+            "status": "Pending",
+        },
+        updates=updates,
+    )
+
+# ============================================================================
+# Single Range Ring Functions
+# ============================================================================
+
+def _extract_single_range_request(text: str) -> Optional[str]:
+    """Extract country from a single range ring command.
+    
+    Returns the country name if matched, None otherwise.
+    Note: Must NOT match reverse range ring commands.
+    """
+    normalized = _normalize_text(text)
+    
+    # First, check if this is actually a reverse range ring command
+    # Reverse commands take priority - do not match them as single
+    reverse_indicators = ["reverse", "launch envelope"]
+    if any(indicator in normalized for indicator in reverse_indicators):
+        return None
+    
+    synonyms = r"single range ring|single ring|range ring"
+    prepositions = r"from|for"
+    pattern = (
+        rf"(?:generate|create|build|show)?\s*(?:a\s+)?"
+        rf"(?:{synonyms})\s+"
+        rf"(?:{prepositions})\s+(?P<country>.+?)\.?$"
+    )
+    match = re.search(pattern, normalized)
+    if not match:
+        return None
+    country_raw = match.group("country")
+    if not country_raw:
+        return None
+    return country_raw.strip()
+
+
+def _build_single_weapon_selection_message(country_name: str, weapons: list[dict]) -> str:
+    """Build the weapon selection message for single range ring."""
+    lines = [
+        f"**Weapon systems available for {country_name}:**",
+        "Select a system by replying with: `Select single weapon #`.",
+        "",
+    ]
+
+    for idx, weapon in enumerate(weapons, start=1):
+        name = weapon.get("name", "Unknown")
+        range_km = weapon.get("range_km", 0)
+        classification = weapon.get("classification", "")
+        label = f"{idx}. {name} — {range_km:,.0f} km"
+        if classification:
+            label += f" ({classification})"
+        lines.append(label)
+
+    return "\n".join(lines)
+
+
+def _extract_single_weapon_selection(text: str) -> Optional[int]:
+    """Extract weapon selection index from 'select single weapon #' command."""
+    normalized = _normalize_text(text)
+    match = re.search(r"select single weapon\s*(?P<index>\d+)", normalized)
+    if match:
+        return int(match.group("index"))
+    return None
+
+
+def _generate_single_range_output_with_weapon(
+    country_name: str,
+    country_code: str,
+    weapon: dict,
+    progress_callback: Optional[callable] = None,
+) -> RangeRingOutput:
+    """Generate Single Range Ring output with selected weapon."""
+    data_service = get_data_service()
+    
+    range_km = weapon.get("range_km", 0)
+    if range_km <= 0:
+        raise CommandParsingError(f"Weapon range data unavailable for {weapon.get('name', 'Unknown')}.")
+
+    input_data = SingleRangeRingInput(
+        origin_type=OriginType.COUNTRY,
+        country_code=country_code,
+        range_value=range_km,
+        range_unit=DistanceUnit.KILOMETERS,
+        weapon_system=weapon.get("name"),
+        resolution="normal",
+    )
+
+    country_geometry = data_service.get_country_geometry(country_code)
+    if country_geometry is None:
+        raise CommandParsingError(f"Could not load geometry for {country_name}.")
+
+    return generate_single_range_ring(
+        input_data,
+        origin_geometry=country_geometry,
+        origin_name=country_name,
+        progress_callback=progress_callback,
+    )
+
+
+def _update_single_pending_history_entry(
+    country_name: str,
+    weapon_name: str,
+    weapon_range: float,
+    final_status: str,
+    output: Optional[RangeRingOutput] = None,
+) -> None:
+    """Update the pending single range ring history entry with completion details."""
+    updates = {
+        "status": final_status,
+        "text": f"Single range ring: {country_name} using {weapon_name} ({weapon_range:,.0f} km)",
+        "weapon_name": weapon_name,
+        "weapon_range_km": weapon_range,
+        "origin_country": country_name,
+    }
+    
+    if output is not None:
+        updates["output"] = output
+    
+    update_command_history_entry(
+        match_criteria={
+            "resolution": "Single Range Ring",
+            "status": "Pending",
+        },
+        updates=updates
+    )
+
+
 def _clear_export_cache() -> None:
     """Clear any cached export data from session state."""
     keys_to_remove = [k for k in st.session_state.keys() if k.startswith("command_exports_")]
@@ -221,54 +516,51 @@ def _update_pending_history_entry(
 
 
 def _render_cached_export_links(output, tool_key: str) -> None:
-    """Render export download links from cache (no generation, instant display)."""
+    """Render export download links from cache (HTML template-based)."""
     output_id = str(output.output_id)
     cache_key = f"command_exports_{output_id}"
-    
+
     if cache_key not in st.session_state:
         st.warning("Cache not found. Please regenerate exports.")
         return
-    
+
     cached = st.session_state[cache_key]
     base_name = f"{tool_key}_{output_id}"
-    
-    export_html = f"""
-    <style>
-        .export-container {{ margin: 10px 0; }}
-        .export-btn {{
-            display: inline-block;
-            padding: 8px 16px;
-            margin: 4px;
-            background-color: #ffffff;
-            border: 1px solid #d3d3d3;
-            border-radius: 4px;
-            color: #262730;
-            text-decoration: none;
-            font-family: "Source Sans Pro", sans-serif;
-            font-size: 14px;
-            font-weight: 400;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            min-width: 100px;
-            text-align: center;
-        }}
-        .export-btn:hover {{ border-color: #ff4b4b; color: #ff4b4b; }}
-        .export-btn:active {{ background-color: #f0f2f6; }}
-        .export-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 8px; }}
-        .export-title {{ font-size: 14px; font-weight: 600; color: #262730; margin-bottom: 8px; }}
-    </style>
-    <div class="export-container">
-        <div class="export-title">📥 Download Options (cached)</div>
-        <div class="export-grid">
-            <a class="export-btn" href="data:application/geo+json;base64,{cached['geojson_b64']}" download="{base_name}.geojson">📥 GeoJSON</a>
-            <a class="export-btn" href="data:application/vnd.google-earth.kmz;base64,{cached['kmz_b64']}" download="{base_name}.kmz">📥 KMZ</a>
-            <a class="export-btn" href="data:image/png;base64,{cached['png_b64']}" download="{base_name}.png">📥 PNG</a>
-            <a class="export-btn" href="data:application/pdf;base64,{cached['pdf_b64']}" download="{base_name}.pdf">📥 PDF</a>
-        </div>
-    </div>
-    """
-    
+
+    export_html = _render_html_template(
+        "export_cached.html",
+        replacements={
+            "{{GEOJSON_B64}}": cached["geojson_b64"],
+            "{{KMZ_B64}}": cached["kmz_b64"],
+            "{{PNG_B64}}": cached["png_b64"],
+            "{{PDF_B64}}": cached["pdf_b64"],
+            "{{BASE_NAME}}": base_name,
+        },
+    )
+
     components.html(export_html, height=100)
+
+
+def _render_rrr_validator() -> None:
+    """Render the Reverse Range Ring real-time validator widget."""
+    import json
+
+    data_service = get_data_service()
+
+    countries = data_service.get_country_list()
+    cities = data_service.get_city_list()
+
+    html = _render_html_template(
+        "rrr_validator.html",
+        replacements={
+            "{{COUNTRIES_JSON}}": json.dumps([c.lower() for c in countries]),
+            "{{CITIES_JSON}}": json.dumps([c.lower() for c in cities]),
+            "{{COUNTRIES_DISPLAY_JSON}}": json.dumps(sorted(countries)),
+            "{{CITIES_DISPLAY_JSON}}": json.dumps(sorted(cities)),
+        },
+    )
+
+    components.html(html, height=420)
 
 
 def _render_js_export_controls(output, tool_key: str) -> None:
@@ -297,57 +589,12 @@ def _render_js_export_controls(output, tool_key: str) -> None:
     else:
         # Show loading status while generating exports
         status_placeholder = st.empty()
-        
-        # Loading HTML with animated spinner
-        loading_html = """
-        <style>
-            .loading-container {
-                display: flex;
-                align-items: center;
-                gap: 12px;
-                padding: 12px 16px;
-                background: linear-gradient(90deg, #f0f2f6 0%, #e8eaef 50%, #f0f2f6 100%);
-                background-size: 200% 100%;
-                animation: shimmer 1.5s ease-in-out infinite;
-                border-radius: 4px;
-                margin: 10px 0;
-            }
-            @keyframes shimmer {
-                0% { background-position: 200% 0; }
-                100% { background-position: -200% 0; }
-            }
-            .loading-spinner {
-                width: 20px;
-                height: 20px;
-                border: 2px solid #d3d3d3;
-                border-top: 2px solid #ff4b4b;
-                border-radius: 50%;
-                animation: spin 1s linear infinite;
-            }
-            @keyframes spin {
-                0% { transform: rotate(0deg); }
-                100% { transform: rotate(360deg); }
-            }
-            .loading-text {
-                font-family: "Source Sans Pro", sans-serif;
-                font-size: 14px;
-                color: #262730;
-            }
-            .loading-status {
-                font-size: 12px;
-                color: #666;
-                margin-left: auto;
-            }
-        </style>
-        <div class="loading-container">
-            <div class="loading-spinner"></div>
-            <span class="loading-text">📥 Preparing Download Options...</span>
-            <span class="loading-status" id="export-status">Generating exports...</span>
-        </div>
-        """
-        
+
+        # Load loading spinner HTML from template
+        loading_html = _render_html_template("export_loading.html")
+
         status_placeholder.markdown(loading_html, unsafe_allow_html=True)
-        
+
         # Generate export data without artificial delays for faster performance
         # GeoJSON and KMZ are fast (no map rendering)
         geojson_data = export_to_geojson_string(output, include_metadata=include_metadata)
@@ -389,82 +636,47 @@ def _render_js_export_controls(output, tool_key: str) -> None:
         
         # Clear the loading placeholder
         status_placeholder.empty()
-    
+
     # File names
     base_name = f"{tool_key}_{output_id}"
-    
-    # Create HTML with styled download links
-    export_html = f"""
-    <style>
-        .export-container {{
-            margin: 10px 0;
-        }}
-        .export-btn {{
-            display: inline-block;
-            padding: 8px 16px;
-            margin: 4px;
-            background-color: #ffffff;
-            border: 1px solid #d3d3d3;
-            border-radius: 4px;
-            color: #262730;
-            text-decoration: none;
-            font-family: "Source Sans Pro", sans-serif;
-            font-size: 14px;
-            font-weight: 400;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            min-width: 100px;
-            text-align: center;
-        }}
-        .export-btn:hover {{
-            border-color: #ff4b4b;
-            color: #ff4b4b;
-        }}
-        .export-btn:active {{
-            background-color: #f0f2f6;
-        }}
-        .export-grid {{
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 8px;
-            margin-top: 8px;
-        }}
-        .export-title {{
-            font-size: 14px;
-            font-weight: 600;
-            color: #262730;
-            margin-bottom: 8px;
-        }}
-    </style>
-    <div class="export-container">
-        <div class="export-title">📥 Download Options</div>
-        <div class="export-grid">
-            <a class="export-btn" href="data:application/geo+json;base64,{geojson_b64}" download="{base_name}.geojson">📥 GeoJSON</a>
-            <a class="export-btn" href="data:application/vnd.google-earth.kmz;base64,{kmz_b64}" download="{base_name}.kmz">📥 KMZ</a>
-            <a class="export-btn" href="data:image/png;base64,{png_b64}" download="{base_name}.png">📥 PNG</a>
-            <a class="export-btn" href="data:application/pdf;base64,{pdf_b64}" download="{base_name}.pdf">📥 PDF</a>
-        </div>
-    </div>
-    """
+
+    export_html = _render_html_template(
+        "export_options.html",
+        replacements={
+            "{{GEOJSON_B64}}": geojson_b64,
+            "{{KMZ_B64}}": kmz_b64,
+            "{{PNG_B64}}": png_b64,
+            "{{PDF_B64}}": pdf_b64,
+            "{{BASE_NAME}}": base_name,
+        },
+    )
     
     components.html(export_html, height=100)
 
 
 def _render_input_panel() -> Optional[str]:
     """Render the user input panel and return the submitted text if any."""
-    pending = get_command_reverse_pending()
+    reverse_pending = get_command_reverse_pending()
+    single_pending = get_command_single_pending()
+    minimum_pending = get_command_minimum_pending()
+    
+    # Check if we're currently processing a task (to disable confirm button)
+    is_processing = st.session_state.get("command_processing", False)
+    pending_query = st.session_state.pop("command_pending_query", None)
+    if pending_query:
+        return pending_query
 
     st.caption("Ask a question • Issue a task • Generate analysis • Get answers")
 
     # If there's a pending reverse range ring selection, show Step 2 UI
-    if pending:
+    if reverse_pending:
         st.markdown("### 🔄 Step 2: Select Weapon System")
         st.info(
             f"**Reverse Range Ring in progress**\n\n"
-            f"Shooter: **{pending.get('country_name')}** → Target: **{pending.get('city_name')}**"
+            f"Shooter: **{reverse_pending.get('country_name')}** → Target: **{reverse_pending.get('city_name')}**"
         )
 
-        weapons = pending.get("weapons", [])
+        weapons = reverse_pending.get("weapons", [])
         weapon_labels = [
             f"{idx}. {w.get('name', 'Unknown')} — {w.get('range_km', 0):,.0f} km"
             for idx, w in enumerate(weapons, start=1)
@@ -475,21 +687,174 @@ def _render_input_panel() -> Optional[str]:
             options=weapon_labels,
             index=0,
             key="weapon_select_dropdown",
+            disabled=is_processing,
         )
 
-        confirm_btn = st.button("✅ Confirm Selection", key="confirm_weapon", use_container_width=True)
+        # Hide the confirm button while processing to match Execute Command behavior
+        confirm_btn = False
+        if not is_processing:
+            confirm_btn = st.button(
+                "✅ Confirm Selection",
+                key="confirm_weapon",
+                use_container_width=True,
+            )
 
         # Reset Execution Query button - only show when there's output to clear
-        if get_command_output() is not None:
+        if get_command_output() is not None and not is_processing:
             st.divider()
             if st.button("🔄 Reset Execution Query", key="reset_execution_query_step2", use_container_width=True):
                 _clear_product_viewer()
                 st.rerun()
 
-        if confirm_btn and selected_label:
+        if confirm_btn and selected_label and not is_processing:
+            # Set processing state to prevent duplicate clicks
+            st.session_state["command_processing"] = True
             # Extract selection index from label
             sel_idx = weapon_labels.index(selected_label) + 1
-            return f"Select reverse weapon {sel_idx}"
+            st.session_state["command_pending_query"] = f"Select reverse weapon {sel_idx}"
+            st.rerun()
+
+        return None
+
+    # If there's a pending single range ring selection, show Step 2 UI
+    if single_pending:
+        st.markdown("### 🎯 Step 2: Select Weapon System")
+        st.info(
+            f"**Single Range Ring in progress**\n\n"
+            f"Origin: **{single_pending.get('country_name')}**"
+        )
+
+        weapons = single_pending.get("weapons", [])
+        weapon_labels = [
+            f"{idx}. {w.get('name', 'Unknown')} — {w.get('range_km', 0):,.0f} km"
+            for idx, w in enumerate(weapons, start=1)
+        ]
+
+        selected_label = st.selectbox(
+            "Choose a weapon system:",
+            options=weapon_labels,
+            index=0,
+            key="single_weapon_select_dropdown",
+            disabled=is_processing,
+        )
+
+        # Hide the confirm button while processing to match Execute Command behavior
+        confirm_btn = False
+        if not is_processing:
+            confirm_btn = st.button(
+                "✅ Confirm Selection",
+                key="confirm_single_weapon",
+                use_container_width=True,
+            )
+
+        # Reset Execution Query button
+        if get_command_output() is not None and not is_processing:
+            st.divider()
+            if st.button("🔄 Reset Execution Query", key="reset_execution_query_single", use_container_width=True):
+                _clear_product_viewer()
+                st.rerun()
+
+        if confirm_btn and selected_label and not is_processing:
+            # Set processing state to prevent duplicate clicks
+            st.session_state["command_processing"] = True
+            sel_idx = weapon_labels.index(selected_label) + 1
+            st.session_state["command_pending_query"] = f"Select single weapon {sel_idx}"
+            st.rerun()
+
+        return None
+
+    # If there's a pending minimum range ring selection, show Step 2 UI
+    if minimum_pending:
+        selection_labels = minimum_pending.get("selection_labels")
+        inferred_type = minimum_pending.get("location_type", "unknown")
+
+        if not selection_labels:
+            st.markdown("### 📏 Step 2: Select Location Type")
+            st.info("**Minimum Range Ring in progress**\n\nSelect a location type to continue.")
+            type_options = ["Countries", "Cities"]
+            default_index = 0 if inferred_type == "countries" else 1
+            selected_type = st.selectbox(
+                "Choose location type:",
+                options=type_options,
+                index=default_index,
+                key="minimum_type_select",
+                disabled=is_processing,
+            )
+
+            confirm_btn = False
+            if not is_processing:
+                confirm_btn = st.button(
+                    "✅ Confirm Selection",
+                    key="confirm_minimum_type",
+                    use_container_width=True,
+                )
+
+            if get_command_output() is not None and not is_processing:
+                st.divider()
+                if st.button(
+                    "🔄 Reset Execution Query",
+                    key="reset_execution_query_minimum_type",
+                    use_container_width=True,
+                ):
+                    _clear_product_viewer()
+                    st.rerun()
+
+            if confirm_btn and selected_type and not is_processing:
+                st.session_state["command_processing"] = True
+                st.session_state["command_pending_query"] = (
+                    f"Select minimum type {selected_type.lower()}"
+                )
+                st.rerun()
+
+            return None
+
+        st.markdown("### 📏 Step 2: Select Minimum Range Locations")
+        st.info(
+            "**Minimum Range Ring in progress**\n\n"
+            f"Mode: **{inferred_type.title()}**"
+        )
+
+        selected_a = st.selectbox(
+            "Select Location A:",
+            options=selection_labels,
+            index=0,
+            key="minimum_location_a",
+            disabled=is_processing,
+        )
+        selected_b = st.selectbox(
+            "Select Location B:",
+            options=selection_labels,
+            index=1 if len(selection_labels) > 1 else 0,
+            key="minimum_location_b",
+            disabled=is_processing,
+        )
+
+        confirm_btn = False
+        if not is_processing:
+            confirm_btn = st.button(
+                "✅ Confirm Selection",
+                key="confirm_minimum_locations",
+                use_container_width=True,
+            )
+
+        if get_command_output() is not None and not is_processing:
+            st.divider()
+            if st.button(
+                "🔄 Reset Execution Query",
+                key="reset_execution_query_minimum",
+                use_container_width=True,
+            ):
+                _clear_product_viewer()
+                st.rerun()
+
+        if confirm_btn and selected_a and selected_b and not is_processing:
+            st.session_state["command_processing"] = True
+            sel_idx_a = selection_labels.index(selected_a) + 1
+            sel_idx_b = selection_labels.index(selected_b) + 1
+            st.session_state["command_pending_query"] = (
+                f"Select minimum locations {sel_idx_a} and {sel_idx_b}"
+            )
+            st.rerun()
 
         return None
 
@@ -505,17 +870,8 @@ def _render_input_panel() -> Optional[str]:
             label_visibility="collapsed",
         )
 
-        st.markdown("**Examples:**")
-        st.markdown(
-            "\n".join(
-                [
-                    "- \"Show recent missile launches in East Asia.\"",
-                    "- \"Generate a reverse range ring from Iran against Tel Aviv.\"",
-                    "- \"Summarize the missile systems Iran operates.\"",
-                    "- \"Create a minimum range ring between North Korea and South Korea.\"",
-                ]
-            )
-        )
+        # Inject JavaScript status bar for real-time input validation
+        _render_command_input_status_bar()
 
         executed = st.form_submit_button("⚙️ Execute Command", use_container_width=True)
 
@@ -555,6 +911,154 @@ def _render_product_output_viewer() -> None:
         if st.button("🔄 Reset Execution Query", key="reset_execution_query", use_container_width=True):
             _clear_product_viewer()
             st.rerun()
+
+
+# Path to the shared JavaScript validation file
+_VALIDATION_JS_PATH = "/home/flaniganp/PycharmProjects/range_ring_2016_05_12/app/ui/command/validation.js"
+
+# Cache for the loaded JS template (loaded once per session)
+_validation_js_cache: Optional[str] = None
+_validation_js_mtime: Optional[int] = None
+_html_template_cache: dict[str, str] = {}
+_html_template_mtime: dict[str, int] = {}
+
+
+def _load_validation_js_template() -> str:
+    """Load the JavaScript validation template from file (cached)."""
+    global _validation_js_cache, _validation_js_mtime
+    js_path = os.path.join(os.path.dirname(__file__), "validation.js")
+    try:
+        current_mtime = os.stat(js_path).st_mtime_ns
+    except OSError:
+        current_mtime = None
+    if _validation_js_cache is None or current_mtime != _validation_js_mtime:
+        with open(js_path, "r", encoding="utf-8") as f:
+            _validation_js_cache = f.read()
+        _validation_js_mtime = current_mtime
+    return _validation_js_cache
+
+
+def _load_html_template(template_name: str) -> str:
+    """Load an HTML template from app/html/command (cached)."""
+    template_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "html", "command")
+    )
+    template_path = os.path.join(template_dir, template_name)
+    try:
+        current_mtime = os.stat(template_path).st_mtime_ns
+    except OSError:
+        current_mtime = None
+    cached_mtime = _html_template_mtime.get(template_name)
+    if template_name not in _html_template_cache or current_mtime != cached_mtime:
+        with open(template_path, "r", encoding="utf-8") as f:
+            _html_template_cache[template_name] = f.read()
+        _html_template_mtime[template_name] = current_mtime
+    return _html_template_cache[template_name]
+
+
+def _render_html_template(template_name: str, replacements: Optional[dict[str, str]] = None) -> str:
+    """Render a cached HTML template with placeholder replacements."""
+    html = _load_html_template(template_name)
+    for placeholder, value in (replacements or {}).items():
+        html = html.replace(placeholder, value)
+    return html
+
+
+def _get_shared_validation_js() -> str:
+    """
+    Load and populate the shared JavaScript validation code.
+    
+    Reads from validation.js and replaces placeholders with actual data:
+    - {{COUNTRIES_JSON}} -> list of lowercase country names
+    - {{CITIES_JSON}} -> list of lowercase city names  
+    - {{COUNTRIES_DISPLAY_JSON}} -> list of display country names
+    - {{CITIES_DISPLAY_JSON}} -> list of display city names
+    """
+    import json
+    
+    # Load the JS template
+    js_template = _load_validation_js_template()
+    
+    # Get data from the service
+    data_service = get_data_service()
+    countries = data_service.get_country_list()
+    cities = data_service.get_city_list()
+    
+    # Create JSON strings for replacement
+    countries_json = json.dumps([c.lower() for c in countries])
+    cities_json = json.dumps([c.lower() for c in cities])
+    countries_display_json = json.dumps(sorted(countries))
+    cities_display_json = json.dumps(sorted(cities))
+    
+    # Replace placeholders with actual data
+    js_code = js_template.replace("{{COUNTRIES_JSON}}", countries_json)
+    js_code = js_code.replace("{{CITIES_JSON}}", cities_json)
+    js_code = js_code.replace("{{COUNTRIES_DISPLAY_JSON}}", countries_display_json)
+    js_code = js_code.replace("{{CITIES_DISPLAY_JSON}}", cities_display_json)
+    
+    return js_code
+
+
+def _render_command_input_status_bar() -> None:
+    """Render a JavaScript-based status bar using the HTML template."""
+    shared_js = _get_shared_validation_js()
+
+    # Extract the default empty message once (same behavior as before)
+    empty_message = (
+        shared_js
+        .split("messages:")[1]
+        .split("empty:")[1]
+        .split("'")[1]
+    )
+
+    status_html = _render_html_template(
+        "status_bar.html",
+        replacements={
+            "{{SHARED_JS}}": shared_js,
+            "{{EMPTY_MESSAGE}}": empty_message,
+        },
+    )
+
+    components.html(status_html, height=55)
+
+
+def _render_single_range_ring_validator() -> None:
+    """Render the Single Range Ring real-time validator widget."""
+    import json
+
+    data_service = get_data_service()
+    countries = data_service.get_country_list()
+
+    html = _render_html_template(
+        "srr_validator.html",
+        replacements={
+            "{{COUNTRIES_JSON}}": json.dumps([c.lower() for c in countries]),
+            "{{COUNTRIES_DISPLAY_JSON}}": json.dumps(sorted(countries)),
+        },
+    )
+
+    components.html(html, height=320)
+
+
+def _render_minimum_range_ring_validator() -> None:
+    """Render the Minimum Range Ring real-time validator widget."""
+    import json
+
+    data_service = get_data_service()
+    countries = data_service.get_country_list()
+    cities = data_service.get_city_list()
+
+    html = _render_html_template(
+        "mrr_validator.html",
+        replacements={
+            "{{COUNTRIES_JSON}}": json.dumps([c.lower() for c in countries]),
+            "{{CITIES_JSON}}": json.dumps([c.lower() for c in cities]),
+            "{{COUNTRIES_DISPLAY_JSON}}": json.dumps(sorted(countries)),
+            "{{CITIES_DISPLAY_JSON}}": json.dumps(sorted(cities)),
+        },
+    )
+
+    components.html(html, height=420)
 
 
 def _render_reverse_range_ring_validator() -> None:
@@ -887,6 +1391,22 @@ def _render_reverse_range_ring_validator() -> None:
                 }}
                 
                 const lower = text.toLowerCase().trim();
+
+                if (lower.includes('minimum') || lower.includes('min distance') || lower.includes('minimum distance')) {{
+                    ['rrr-verb', 'rrr-type', 'rrr-from', 'rrr-country', 'rrr-target', 'rrr-city'].forEach(id => {{
+                        setStatus(id, null, '—');
+                    }});
+                    if (hint) hint.textContent = 'This looks like a Minimum Range Ring command. See Minimum Range Ring tab.';
+                    return;
+                }}
+
+                if (lower.includes('single range ring') || lower.includes('single ring')) {{
+                    ['rrr-verb', 'rrr-type', 'rrr-from', 'rrr-country', 'rrr-target', 'rrr-city'].forEach(id => {{
+                        setStatus(id, null, '—');
+                    }});
+                    if (hint) hint.textContent = 'This looks like a Single Range Ring command. See Single Range Ring tab.';
+                    return;
+                }}
                 
                 // Verb validation
                 let verbMatch = validVerbs.find(v => lower.startsWith(v));
@@ -899,7 +1419,8 @@ def _render_reverse_range_ring_validator() -> None:
                 // From preposition validation
                 let fromMatch = validFromPreps.find(p => {{
                     const typeEnd = typeMatch ? lower.indexOf(typeMatch) + typeMatch.length : 0;
-                    return lower.indexOf(' ' + p + ' ', typeEnd) >= 0;
+                    const afterType = lower.substring(typeEnd);
+                    return afterType.includes(' ' + p + ' ') || afterType.endsWith(' ' + p);
                 }});
                 setStatus('rrr-from', fromMatch ? 'exact' : false, fromMatch || '—', fromMatch);
                 
@@ -907,18 +1428,34 @@ def _render_reverse_range_ring_validator() -> None:
                 let city = null;
                 let targetPrep = null;
                 
-                if (fromMatch && typeMatch) {{
-                    const fromIdx = lower.indexOf(' ' + fromMatch + ' ');
+                if (fromMatch) {{
+                    const typeEnd = typeMatch ? lower.indexOf(typeMatch) + typeMatch.length : 0;
+                    const fromToken = ' ' + fromMatch;
+                    const fromIdx = lower.indexOf(fromToken + ' ', typeEnd);
+                    let afterFrom = '';
+
                     if (fromIdx >= 0) {{
-                        const afterFrom = lower.substring(fromIdx + fromMatch.length + 2);
-                        for (const tp of validTargetPreps) {{
-                            const tpIdx = afterFrom.indexOf(' ' + tp + ' ');
+                        afterFrom = lower.substring(fromIdx + fromMatch.length + 2);
+                    }} else if (lower.endsWith(fromToken)) {{
+                        afterFrom = '';
+                    }}
+
+                    if (afterFrom !== '') {{
+                        const targetMatch = validTargetPreps.find(tp => (
+                            afterFrom.includes(' ' + tp + ' ') || afterFrom.endsWith(' ' + tp)
+                        ));
+                        if (targetMatch) {{
+                            const tpIdx = afterFrom.indexOf(' ' + targetMatch + ' ');
+                            targetPrep = targetMatch;
                             if (tpIdx >= 0) {{
-                                targetPrep = tp;
                                 country = afterFrom.substring(0, tpIdx).trim();
-                                city = afterFrom.substring(tpIdx + tp.length + 2).trim().replace(/\\.$/, '');
-                                break;
+                                city = afterFrom.substring(tpIdx + targetMatch.length + 2).trim().replace(/\\.$/, '');
+                            }} else {{
+                                country = afterFrom.substring(0, afterFrom.length - targetMatch.length - 1).trim();
+                                city = '';
                             }}
+                        }} else {{
+                            country = afterFrom.trim();
                         }}
                     }}
                 }}
@@ -1072,38 +1609,61 @@ def _render_help_section() -> None:
                 "Then respond with `Select reverse weapon #` using the number from the returned list to generate "
                 "the reverse range ring output and export options."
             )
+            st.markdown("**Example:**")
+            st.code("Generate a reverse range ring from Iran against Tel Aviv")
             # Add the real-time validator widget
             _render_reverse_range_ring_validator()
         
         with tab_single:
-            st.markdown("**Single Range Ring** — slug: `single_range_ring`")
-            st.markdown("*Coming Soon*")
-            st.markdown("Generate a single range ring from a country or point of interest.")
-            st.code("Generate a single range ring from [Country] with range [X] km")
+            st.markdown("**Single Range Ring Task**")
+            st.markdown(
+                "Use the format: `Generate a {single range ring|single ring|range ring} "
+                "{from|for} {Country}.`"
+            )
+            st.markdown(
+                "Then respond with `Select single weapon #` using the number from the returned list to generate "
+                "the single range ring output and export options."
+            )
+            st.markdown("**Example:**")
+            st.code("Generate a single range ring from Iran")
+            # Add the real-time validator widget for Single Range Ring
+            _render_single_range_ring_validator()
         
         with tab_multi:
-            st.markdown("**Multiple Range Ring** — slug: `multiple_range_ring`")
+            st.markdown("**Multiple Range Ring**")
             st.markdown("*Coming Soon*")
             st.markdown("Generate multiple concentric range rings from a country or point.")
-            st.code("Generate multiple range rings from [Country] at 500, 1000, 1500 km")
+            st.markdown("**Example:**")
+            st.code("Generate multiple range rings from North Korea at 500, 1000, 1500 km")
         
         with tab_min:
-            st.markdown("**Minimum Range Ring** — slug: `minimum_range_ring`")
-            st.markdown("*Coming Soon*")
-            st.markdown("Calculate the minimum distance between two countries or cities.")
-            st.code("Calculate minimum distance between [Country A] and [Country B]")
+            st.markdown("**Minimum Range Ring Task**")
+            st.markdown(
+                "Use the format: `Calculate {minimum range ring|min distance|minimum distance} "
+                "between {Location A} and {Location B}.`"
+            )
+            st.markdown(
+                "Then respond with `Select minimum type countries` or `Select minimum type cities`, followed by "
+                "`Select minimum locations # and #` using the numbered list to generate the output and exports."
+            )
+            st.markdown("**Example:**")
+            st.code("Calculate minimum distance between Korea, North and Japan")
+            # Add the real-time validator widget for Minimum Range Ring
+            _render_minimum_range_ring_validator()
         
         with tab_poi:
-            st.markdown("**Custom POI Range Ring** — slug: `custom_poi_range_ring`")
+            st.markdown("**Custom POI Range Ring**")
             st.markdown("*Coming Soon*")
             st.markdown("Generate range rings from custom points of interest.")
-            st.code("Generate range ring from lat [X] lon [Y] with range [Z] km")
+            st.markdown("**Example:**")
+            st.code("Generate range ring from lat 35.6762 lon 51.4241 with range 1000 km")
         
         with tab_traj:
-            st.markdown("**Launch Trajectory** — slug: `launch_trajectory`")
+            st.markdown("**Launch Trajectory**")
             st.markdown("*Coming Soon*")
             st.markdown("Visualize ballistic missile launch trajectories.")
-            st.code("Show launch trajectory from [Origin] to [Target]")
+            st.markdown("**Example:**")
+            st.code("Show launch trajectory from Pyongyang to Tokyo")
 
 
 def _render_history() -> None:
@@ -1145,6 +1705,18 @@ def _render_history() -> None:
                 if weapon_name and shooter and target:
                     st.caption(f"🎯 {shooter} → {target}")
                     st.caption(f"🚀 {weapon_name} ({weapon_range:,.0f} km)")
+            if resolution == "Minimum Range Ring":
+                location_a = entry.get("location_a")
+                location_b = entry.get("location_b")
+                distance_km = entry.get("minimum_distance_km")
+                location_type = entry.get("location_type", "")
+                if location_a and location_b:
+                    st.caption(
+                        f"📏 {location_a} ↔ {location_b}"
+                        + (f" • {distance_km:,.1f} km" if distance_km is not None else "")
+                    )
+                    if location_type:
+                        st.caption(f"🗂️ Mode: {location_type.title()}")
             
             st.caption(f"Resolution: {resolution}")
             st.caption(f"Status: {display_status}")
@@ -1170,6 +1742,208 @@ def _render_history() -> None:
 
 def _mock_intent_response(query: str) -> tuple[CommandOutput, str, str]:
     """Return a placeholder response until full intent routing is implemented."""
+    
+    # =========================================================================
+    # Handle Minimum Range Ring location selection (Step 2)
+    # =========================================================================
+    minimum_pending = get_command_minimum_pending()
+    minimum_selection = _extract_minimum_location_selection(query)
+    if minimum_pending and minimum_selection:
+        selection_labels = minimum_pending.get("selection_labels", [])
+        selected_indices = [minimum_selection[0] - 1, minimum_selection[1] - 1]
+        if all(0 <= idx < len(selection_labels) for idx in selected_indices):
+            location_a = selection_labels[selected_indices[0]]
+            location_b = selection_labels[selected_indices[1]]
+            progress_bar = st.progress(0, text="0% - Initializing...")
+
+            def update_progress(pct: float, status: str):
+                progress_bar.progress(min(pct, 1.0), text=f"{int(pct * 100)}% - {status}")
+
+            try:
+                output, distance_km = _generate_minimum_range_output(
+                    minimum_pending["location_type"],
+                    location_a,
+                    location_b,
+                    progress_callback=update_progress,
+                )
+                progress_bar.progress(1.0, text="100% - Complete!")
+
+                _update_minimum_pending_history_entry(
+                    minimum_pending["location_type"],
+                    location_a,
+                    location_b,
+                    distance_km,
+                    "Completed",
+                    output=output,
+                )
+
+                set_command_minimum_pending(None)
+                st.session_state["command_processing"] = False
+                return output, "Minimum Range Ring", "Completed (Updated)"
+            except CommandParsingError as exc:
+                progress_bar.progress(1.0, text="Error!")
+                st.session_state["command_processing"] = False
+                return f"**Command Center Error**\n\n{exc}", "Minimum Range Ring", "Failed"
+
+        st.session_state["command_processing"] = False
+        return (
+            "**Selection Error**\n\nPlease reply with valid location numbers from the list.",
+            "Minimum Range Ring",
+            "Pending",
+        )
+
+    # =========================================================================
+    # Handle Minimum Range Ring type selection (Step 1.5)
+    # =========================================================================
+    minimum_type_selection = _extract_minimum_location_type(query)
+    if minimum_pending and minimum_type_selection and not minimum_pending.get("selection_labels"):
+        location_type = minimum_type_selection
+        data_service = get_data_service()
+        if location_type == "countries":
+            selection_labels = data_service.get_country_list()
+        else:
+            selection_labels = data_service.get_city_list()
+
+        set_command_minimum_pending(
+            {
+                "location_type": location_type,
+                "selection_labels": selection_labels,
+            }
+        )
+        st.session_state["command_processing"] = False
+        message = _build_minimum_location_selection_message(location_type, selection_labels)
+        return message, "Minimum Range Ring", "Pending"
+
+    # =========================================================================
+    # Handle Single Range Ring weapon selection (Step 2)
+    # =========================================================================
+    single_pending = get_command_single_pending()
+    single_selection = _extract_single_weapon_selection(query)
+    if single_pending and single_selection:
+        weapons = single_pending.get("weapons", [])
+        selected_index = single_selection - 1
+        if 0 <= selected_index < len(weapons):
+            weapon = weapons[selected_index]
+            weapon_name = weapon.get("name", "Unknown")
+            weapon_range = weapon.get("range_km", 0)
+            
+            progress_bar = st.progress(0, text="0% - Initializing...")
+            
+            def update_progress(pct: float, status: str):
+                progress_bar.progress(min(pct, 1.0), text=f"{int(pct * 100)}% - {status}")
+            
+            try:
+                output = _generate_single_range_output_with_weapon(
+                    single_pending["country_name"],
+                    single_pending["country_code"],
+                    weapon,
+                    progress_callback=update_progress,
+                )
+                progress_bar.progress(1.0, text="100% - Complete!")
+                
+                _update_single_pending_history_entry(
+                    single_pending["country_name"],
+                    weapon_name,
+                    weapon_range,
+                    "Completed",
+                    output=output,
+                )
+                
+                set_command_single_pending(None)
+                # Clear processing state
+                st.session_state["command_processing"] = False
+                return output, "Single Range Ring", "Completed (Updated)"
+            except CommandParsingError as exc:
+                progress_bar.progress(1.0, text="Error!")
+                # Clear processing state on error
+                st.session_state["command_processing"] = False
+                return f"**Command Center Error**\n\n{exc}", "Single Range Ring", "Failed"
+        # Clear processing state on invalid selection
+        st.session_state["command_processing"] = False
+        return (
+            "**Selection Error**\n\nPlease reply with a valid weapon number from the list.",
+            "Single Range Ring",
+            "Pending",
+        )
+    
+    # =========================================================================
+    # Handle Single Range Ring initial request (Step 1)
+    # =========================================================================
+    single_request = _extract_single_range_request(query)
+    if single_request:
+        country = single_request
+        try:
+            data_service = get_data_service()
+            matched_country = _fuzzy_match(country, data_service.get_country_list(), cutoff=0.6)
+            if not matched_country:
+                raise CommandParsingError(f"Could not match country '{country}' in request.")
+
+            country_code = data_service.get_country_code(matched_country)
+            if not country_code:
+                raise CommandParsingError(f"Could not resolve ISO code for '{matched_country}'.")
+
+            weapons = data_service.get_weapon_systems(country_code)
+            if not weapons:
+                raise CommandParsingError(f"No weapon systems found for {matched_country}.")
+
+            set_command_single_pending(
+                {
+                    "country_name": matched_country,
+                    "country_code": country_code,
+                    "weapons": weapons,
+                }
+            )
+
+            message = _build_single_weapon_selection_message(matched_country, weapons)
+            return message, "Single Range Ring", "Pending"
+        except CommandParsingError as exc:
+            return f"**Command Center Error**\n\n{exc}", "Single Range Ring", "Failed"
+    
+    # =========================================================================
+    # Handle Minimum Range Ring initial request (Step 1)
+    # =========================================================================
+    minimum_request = _extract_minimum_range_request(query)
+    if minimum_request:
+        location_a, location_b = minimum_request
+        try:
+            data_service = get_data_service()
+            country_match_a = _fuzzy_match(location_a, data_service.get_country_list(), cutoff=0.6)
+            country_match_b = _fuzzy_match(location_b, data_service.get_country_list(), cutoff=0.6)
+            city_match_a = _fuzzy_match(location_a, data_service.get_city_list(), cutoff=0.6)
+            city_match_b = _fuzzy_match(location_b, data_service.get_city_list(), cutoff=0.6)
+
+            if (country_match_a and country_match_b) and not (city_match_a and city_match_b):
+                location_type = "countries"
+            elif (city_match_a and city_match_b) and not (country_match_a and country_match_b):
+                location_type = "cities"
+            else:
+                location_type = "unknown"
+
+            if location_type == "unknown":
+                set_command_minimum_pending({"location_type": location_type})
+                message = _build_minimum_location_type_message()
+                return message, "Minimum Range Ring", "Pending"
+
+            selection_labels = (
+                data_service.get_country_list()
+                if location_type == "countries"
+                else data_service.get_city_list()
+            )
+            set_command_minimum_pending(
+                {
+                    "location_type": location_type,
+                    "selection_labels": selection_labels,
+                }
+            )
+            st.session_state["command_processing"] = False
+            message = _build_minimum_location_selection_message(location_type, selection_labels)
+            return message, "Minimum Range Ring", "Pending"
+        except CommandParsingError as exc:
+            return f"**Command Center Error**\n\n{exc}", "Minimum Range Ring", "Failed"
+
+    # =========================================================================
+    # Handle Reverse Range Ring weapon selection (Step 2)
+    # =========================================================================
     pending = get_command_reverse_pending()
     selection = _extract_reverse_weapon_selection(query)
     if pending and selection:
@@ -1209,10 +1983,16 @@ def _mock_intent_response(query: str) -> tuple[CommandOutput, str, str]:
                 )
                 
                 set_command_reverse_pending(None)
+                # Clear processing state
+                st.session_state["command_processing"] = False
                 return output, "Reverse Range Ring", "Completed (Updated)"
             except CommandParsingError as exc:
                 progress_bar.progress(1.0, text="Error!")
+                # Clear processing state on error
+                st.session_state["command_processing"] = False
                 return f"**Command Center Error**\n\n{exc}", "Reverse Range Ring", "Failed"
+        # Clear processing state on invalid selection
+        st.session_state["command_processing"] = False
         return (
             "**Selection Error**\n\nPlease reply with a valid weapon number from the list.",
             "Reverse Range Ring",
@@ -1291,6 +2071,7 @@ def render_command_center() -> None:
     """Render the Command tab page layout."""
     st.header("⚡ ORRG – Command Center")
 
+    was_processing = st.session_state.get("command_processing", False)
     query = _render_input_panel()
     if query:
         output, resolution, status = _mock_intent_response(query)
@@ -1302,10 +2083,11 @@ def render_command_center() -> None:
         # Only add a new history entry if we're not updating an existing one
         # "Completed (Updated)" means we already updated the pending entry
         if status != "Completed (Updated)":
+            is_task = resolution in ("Reverse Range Ring", "Single Range Ring", "Minimum Range Ring")
             add_command_history_entry(
                 {
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "type": "Task" if resolution == "Reverse Range Ring" else "Query",
+                    "type": "Task" if is_task else "Query",
                     "text": query,
                     "resolution": resolution,
                     "status": status,
@@ -1313,9 +2095,14 @@ def render_command_center() -> None:
             )
 
         # If a pending state was just set, rerun to show Step 2 UI immediately
-        if status == "Pending" and get_command_reverse_pending() is not None:
+        if status == "Pending" and (
+            get_command_reverse_pending() is not None
+            or get_command_single_pending() is not None
+            or get_command_minimum_pending() is not None
+        ):
             st.rerun()
 
-    _render_help_section()
+    if not was_processing and not st.session_state.get("command_processing", False):
+        _render_help_section()
     _render_product_output_viewer()
     _render_history()

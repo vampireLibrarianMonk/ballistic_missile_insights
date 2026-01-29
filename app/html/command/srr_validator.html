@@ -1,0 +1,414 @@
+<style>
+    .srr-validator {
+        font-family: "Source Sans Pro", sans-serif;
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 12px;
+        margin: 10px 0;
+    }
+    .srr-validator-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 8px;
+    }
+    .srr-section {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 13px;
+    }
+    .srr-icon {
+        width: 18px;
+        height: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+    }
+    .srr-valid { color: #28a745; }
+    .srr-invalid { color: #dc3545; }
+    .srr-warning { color: #ffc107; }
+    .srr-pending { color: #6c757d; }
+    .srr-label {
+        color: #555;
+        min-width: 100px;
+    }
+    .srr-value {
+        color: #333;
+        font-weight: 500;
+    }
+    .srr-match {
+        color: #28a745;
+        font-size: 11px;
+        margin-left: 4px;
+    }
+    .srr-hint {
+        font-size: 11px;
+        color: #888;
+        font-style: italic;
+        margin-top: 8px;
+    }
+    /* Lookup section styles */
+    .srr-lookup-section {
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px solid #e0e0e0;
+    }
+    .srr-lookup-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: #555;
+        margin-bottom: 8px;
+    }
+    .srr-lookup-label {
+        font-size: 11px;
+        color: #666;
+        margin-bottom: 4px;
+    }
+    .srr-search-input {
+        width: 100%;
+        padding: 6px 8px;
+        font-size: 12px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        box-sizing: border-box;
+    }
+    .srr-search-input:focus {
+        outline: none;
+        border-color: #ff4b4b;
+    }
+    .srr-suggestions {
+        max-height: 150px;
+        overflow-y: auto;
+        overflow-x: hidden;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: white;
+        margin-top: 4px;
+        display: none;
+        scrollbar-width: thin;
+        scrollbar-color: #888 #f0f0f0;
+    }
+    .srr-suggestions::-webkit-scrollbar {
+        width: 8px;
+    }
+    .srr-suggestions::-webkit-scrollbar-track {
+        background: #f0f0f0;
+        border-radius: 4px;
+    }
+    .srr-suggestions::-webkit-scrollbar-thumb {
+        background: #888;
+        border-radius: 4px;
+    }
+    .srr-suggestions::-webkit-scrollbar-thumb:hover {
+        background: #666;
+    }
+    .srr-suggestions.active {
+        display: block;
+    }
+    .srr-suggestion {
+        padding: 6px 8px;
+        font-size: 11px;
+        cursor: pointer;
+        border-bottom: 1px solid #eee;
+    }
+    .srr-suggestion:last-child {
+        border-bottom: none;
+    }
+    .srr-suggestion:hover {
+        background: #f0f2f6;
+    }
+    .srr-no-results {
+        padding: 6px 8px;
+        font-size: 11px;
+        color: #888;
+        font-style: italic;
+    }
+</style>
+<div class="srr-validator" id="srr-validator-widget">
+    <div class="srr-validator-title">📋 Query Validator</div>
+    <div class="srr-section" id="srr-verb">
+        <span class="srr-icon srr-pending" id="srr-verb-icon">○</span>
+        <span class="srr-label">Action:</span>
+        <span class="srr-value" id="srr-verb-value">—</span>
+    </div>
+    <div class="srr-section" id="srr-type">
+        <span class="srr-icon srr-pending" id="srr-type-icon">○</span>
+        <span class="srr-label">Ring Type:</span>
+        <span class="srr-value" id="srr-type-value">—</span>
+    </div>
+    <div class="srr-section" id="srr-from">
+        <span class="srr-icon srr-pending" id="srr-from-icon">○</span>
+        <span class="srr-label">Preposition:</span>
+        <span class="srr-value" id="srr-from-value">—</span>
+    </div>
+    <div class="srr-section" id="srr-country">
+        <span class="srr-icon srr-pending" id="srr-country-icon">○</span>
+        <span class="srr-label">Country:</span>
+        <span class="srr-value" id="srr-country-value">—</span>
+    </div>
+    <div class="srr-hint" id="srr-hint">Type your command above to see validation...</div>
+
+    <!-- Lookup Section -->
+    <div class="srr-lookup-section">
+        <div class="srr-lookup-title">🔍 Country Lookup (search to find exact format)</div>
+        <div class="srr-lookup-label">Country Search:</div>
+        <input type="text" class="srr-search-input" id="srr-country-search" placeholder="Type to search countries..." autocomplete="off">
+        <div class="srr-suggestions" id="srr-country-suggestions"></div>
+    </div>
+</div>
+
+<script>
+    (function() {
+        // Valid options for single range ring
+        const validVerbs = ['generate', 'create', 'build', 'show'];
+        const validTypes = ['single range ring', 'single ring', 'range ring'];
+        const validFromPreps = ['from', 'for'];
+        const validCountries = {{COUNTRIES_JSON}};
+        const countriesDisplay = {{COUNTRIES_DISPLAY_JSON}};
+
+        // Fuzzy match function
+        function fuzzyMatch(input, options) {
+            if (!input) return null;
+            const lower = input.toLowerCase().trim();
+            if (options.includes(lower)) return lower;
+            const prefixMatch = options.find(opt => opt.startsWith(lower));
+            if (prefixMatch) return prefixMatch;
+            for (const opt of options) {
+                const words = opt.split(/[\s,]+/);
+                for (const word of words) {
+                    if (word.startsWith(lower) || lower.startsWith(word)) {
+                        return opt;
+                    }
+                }
+            }
+            const containsMatch = options.find(opt => opt.includes(lower) || lower.includes(opt));
+            return containsMatch || null;
+        }
+
+        // Get fuzzy matches for suggestions
+        function getFuzzyMatches(input, displayOptions, maxResults = 10) {
+            if (!input || input.length < 1) return displayOptions.slice(0, maxResults);
+            const lower = input.toLowerCase().trim();
+
+            const scored = displayOptions.map(opt => {
+                const optLower = opt.toLowerCase();
+                let score = 0;
+                if (optLower === lower) score = 100;
+                else if (optLower.startsWith(lower)) score = 80;
+                else {
+                    const words = optLower.split(/[\s,]+/);
+                    for (const word of words) {
+                        if (word.startsWith(lower)) {
+                            score = 70;
+                            break;
+                        }
+                    }
+                }
+                if (score === 0 && optLower.includes(lower)) score = 50;
+                if (score === 0) {
+                    const words = optLower.split(/[\s,]+/);
+                    for (const word of words) {
+                        if (lower.includes(word) && word.length > 2) {
+                            score = 40;
+                            break;
+                        }
+                    }
+                }
+                return { opt, score };
+            });
+
+            return scored
+                .filter(s => s.score > 0)
+                .sort((a, b) => b.score - a.score)
+                .slice(0, maxResults)
+                .map(s => s.opt);
+        }
+
+        function setStatus(id, valid, value, matched) {
+            const icon = document.getElementById(id + '-icon');
+            const valueEl = document.getElementById(id + '-value');
+            if (!icon || !valueEl) return;
+
+            if (valid === 'exact') {
+                icon.textContent = '✓';
+                icon.className = 'srr-icon srr-valid';
+            } else if (valid === 'fuzzy') {
+                icon.textContent = '⚠';
+                icon.className = 'srr-icon srr-warning';
+            } else if (valid === false) {
+                icon.textContent = '✗';
+                icon.className = 'srr-icon srr-invalid';
+            } else {
+                icon.textContent = '○';
+                icon.className = 'srr-icon srr-pending';
+            }
+
+            if (value && matched && matched !== value.toLowerCase()) {
+                valueEl.innerHTML = value + '<span class="srr-match"> (use: ' + matched + ')</span>';
+            } else {
+                valueEl.textContent = value || '—';
+            }
+        }
+
+        function parseAndValidate(text) {
+            const hint = document.getElementById('srr-hint');
+            if (!text || text.trim().length < 3) {
+                ['srr-verb', 'srr-type', 'srr-from', 'srr-country'].forEach(id => {
+                    setStatus(id, null, '—');
+                });
+                if (hint) hint.textContent = 'Type your command above to see validation...';
+                return;
+            }
+
+            const lower = text.toLowerCase().trim();
+
+            if (lower.includes('minimum') || lower.includes('min distance') || lower.includes('minimum distance')) {
+                ['srr-verb', 'srr-type', 'srr-from', 'srr-country'].forEach(id => {
+                    setStatus(id, null, '—');
+                });
+                if (hint) hint.textContent = 'This looks like a Minimum Range Ring command. See Minimum Range Ring tab.';
+                return;
+            }
+
+            // Check if this looks like a single range ring command (not reverse)
+            if (lower.includes('reverse') || lower.includes('launch envelope')) {
+                ['srr-verb', 'srr-type', 'srr-from', 'srr-country'].forEach(id => {
+                    setStatus(id, null, '—');
+                });
+                if (hint) hint.textContent = 'This looks like a Reverse Range Ring command. See Reverse Range Ring tab.';
+                return;
+            }
+
+            // Verb validation
+            let verbMatch = validVerbs.find(v => lower.startsWith(v));
+            setStatus('srr-verb', verbMatch ? 'exact' : false, verbMatch || (lower.split(' ')[0] || ''), verbMatch);
+
+            // Type validation
+            let typeMatch = validTypes.find(t => lower.includes(t));
+            setStatus('srr-type', typeMatch ? 'exact' : false, typeMatch || '—', typeMatch);
+
+            // From preposition validation
+            let fromMatch = validFromPreps.find(p => {
+                const typeEnd = typeMatch ? lower.indexOf(typeMatch) + typeMatch.length : 0;
+                const afterType = lower.substring(typeEnd);
+                return afterType.includes(' ' + p + ' ') || afterType.endsWith(' ' + p);
+            });
+            setStatus('srr-from', fromMatch ? 'exact' : false, fromMatch || '—', fromMatch);
+
+            // Extract country
+            let country = null;
+            if (fromMatch) {
+                const typeEnd = typeMatch ? lower.indexOf(typeMatch) + typeMatch.length : 0;
+                const fromToken = ' ' + fromMatch;
+                const fromIdx = lower.indexOf(fromToken + ' ', typeEnd);
+                if (fromIdx >= 0) {
+                    country = lower.substring(fromIdx + fromMatch.length + 2).trim().replace(/\.$/, '');
+                } else if (lower.endsWith(fromToken)) {
+                    country = '';
+                }
+            }
+
+            // Country validation: exact vs fuzzy vs no match
+            let countryStatus = false;
+            let countryMatch = null;
+            if (country) {
+                const countryLower = country.toLowerCase();
+                if (validCountries.includes(countryLower)) {
+                    countryStatus = 'exact';
+                    countryMatch = countryLower;
+                } else {
+                    countryMatch = fuzzyMatch(country, validCountries);
+                    if (countryMatch) {
+                        countryStatus = 'fuzzy';
+                    }
+                }
+            }
+            setStatus('srr-country', countryStatus, country || '—', countryMatch);
+
+            // Check overall validity
+            const allExact = verbMatch && typeMatch && fromMatch && (countryStatus === 'exact');
+            const allValid = verbMatch && typeMatch && fromMatch && countryMatch;
+            const hasFuzzy = countryStatus === 'fuzzy';
+            const partialValid = typeMatch || countryMatch;
+
+            if (allExact) {
+                if (hint) hint.textContent = '✅ Query looks valid! Click Execute to proceed.';
+            } else if (allValid && hasFuzzy) {
+                if (hint) hint.textContent = '⚠️ Query may work, but check ⚠ items for exact format.';
+            } else if (partialValid) {
+                if (hint) hint.textContent = '⚠️ Some fields need attention. Check the items marked with ✗ or ⚠';
+            } else {
+                if (hint) hint.textContent = 'Format: Generate a single range ring from [Country]';
+            }
+        }
+
+        // Setup lookup search box
+        function setupLookup(inputId, suggestionsId, displayOptions) {
+            const input = document.getElementById(inputId);
+            const suggestions = document.getElementById(suggestionsId);
+            if (!input || !suggestions) return;
+
+            input.addEventListener('input', function() {
+                const val = this.value;
+                const matches = getFuzzyMatches(val, displayOptions, 10);
+
+                if (matches.length > 0) {
+                    suggestions.innerHTML = matches.map(m =>
+                        '<div class="srr-suggestion">' + m + '</div>'
+                    ).join('');
+                    suggestions.classList.add('active');
+                } else {
+                    suggestions.innerHTML = '<div class="srr-no-results">No matches found</div>';
+                    suggestions.classList.add('active');
+                }
+            });
+
+            input.addEventListener('focus', function() {
+                if (this.value.length >= 1 || suggestions.innerHTML) {
+                    suggestions.classList.add('active');
+                }
+            });
+
+            input.addEventListener('blur', function() {
+                setTimeout(() => suggestions.classList.remove('active'), 200);
+            });
+
+            suggestions.addEventListener('click', function(e) {
+                if (e.target.classList.contains('srr-suggestion')) {
+                    input.value = e.target.textContent;
+                    suggestions.classList.remove('active');
+                }
+            });
+        }
+
+        // Initialize lookup box
+        setupLookup('srr-country-search', 'srr-country-suggestions', countriesDisplay);
+
+        function attachListener() {
+            const textareas = window.parent.document.querySelectorAll('textarea');
+            for (const ta of textareas) {
+                if (ta.placeholder && ta.placeholder.includes('Type a question')) {
+                    ta.addEventListener('input', function(e) {
+                        parseAndValidate(e.target.value);
+                    });
+                    parseAndValidate(ta.value);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        let attempts = 0;
+        const maxAttempts = 20;
+        const tryAttach = setInterval(function() {
+            attempts++;
+            if (attachListener() || attempts >= maxAttempts) {
+                clearInterval(tryAttach);
+            }
+        }, 200);
+    })();
+</script>

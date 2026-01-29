@@ -1,0 +1,33 @@
+<style>
+    .export-container { margin: 10px 0; }
+    .export-btn {
+        display: inline-block;
+        padding: 8px 16px;
+        margin: 4px;
+        background-color: #ffffff;
+        border: 1px solid #d3d3d3;
+        border-radius: 4px;
+        color: #262730;
+        text-decoration: none;
+        font-family: "Source Sans Pro", sans-serif;
+        font-size: 14px;
+        font-weight: 400;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        min-width: 100px;
+        text-align: center;
+    }
+    .export-btn:hover { border-color: #ff4b4b; color: #ff4b4b; }
+    .export-btn:active { background-color: #f0f2f6; }
+    .export-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 8px; }
+    .export-title { font-size: 14px; font-weight: 600; color: #262730; margin-bottom: 8px; }
+</style>
+<div class="export-container">
+    <div class="export-title">📥 Download Options (cached)</div>
+    <div class="export-grid">
+        <a class="export-btn" href="data:application/geo+json;base64,{{GEOJSON_B64}}" download="{{BASE_NAME}}.geojson">📥 GeoJSON</a>
+        <a class="export-btn" href="data:application/vnd.google-earth.kmz;base64,{{KMZ_B64}}" download="{{BASE_NAME}}.kmz">📥 KMZ</a>
+        <a class="export-btn" href="data:image/png;base64,{{PNG_B64}}" download="{{BASE_NAME}}.png">📥 PNG</a>
+        <a class="export-btn" href="data:application/pdf;base64,{{PDF_B64}}" download="{{BASE_NAME}}.pdf">📥 PDF</a>
+    </div>
+</div>
