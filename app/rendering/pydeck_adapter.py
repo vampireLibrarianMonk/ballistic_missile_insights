@@ -11,6 +11,7 @@ from app.models.outputs import (
     RangeRingOutput,
     RangeRingLayer,
     GeometryType,
+    OutputType,
 )
 
 
@@ -300,17 +301,28 @@ def render_range_ring_output(
     # Get map style
     style = DARK_STYLE if map_style == "dark" else DEFAULT_STYLE
     
-    return pdk.Deck(
-        layers=pdk_layers,
-        initial_view_state=view_state,
-        map_style=style,
-        tooltip={
+    # Tooltip configuration (minimum-distance tool should not show a "Range" line)
+    tooltip = {
+        "html": "<b>{name}</b>",
+        "style": {
+            "backgroundColor": "steelblue",
+            "color": "white",
+        },
+    }
+    if output.output_type != OutputType.MINIMUM_RANGE_RING:
+        tooltip = {
             "html": "<b>{name}</b><br/>Range: {range_km} km",
             "style": {
                 "backgroundColor": "steelblue",
                 "color": "white",
             },
-        },
+        }
+    
+    return pdk.Deck(
+        layers=pdk_layers,
+        initial_view_state=view_state,
+        map_style=style,
+        tooltip=tooltip,
     )
 
 

@@ -117,6 +117,12 @@ class MultipleRangeRingInput(BaseModel):
         min_length=1,
         description="List of (range_value, unit, optional_label) tuples"
     )
+
+    # Optional source for the weapon data (applies to the set of ranges)
+    weapon_source: Optional[str] = Field(
+        None,
+        description="Source of weapon data (e.g., '2020 Ballistic and Cruise Missile Threat Report')",
+    )
     
     # Resolution
     resolution: str = Field("normal", description="Ring resolution")
@@ -135,6 +141,10 @@ class ReverseRangeRingInput(BaseModel):
     
     # Optional weapon system for labeling
     weapon_system: Optional[str] = Field(None, description="Weapon system name")
+    weapon_source: Optional[str] = Field(
+        None,
+        description="Source of weapon data (e.g., '2020 Ballistic and Cruise Missile Threat Report')",
+    )
     
     # Resolution
     resolution: str = Field("normal", description="Ring resolution")

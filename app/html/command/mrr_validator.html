@@ -1,0 +1,484 @@
+<style>
+    .mrr-validator {
+        font-family: "Source Sans Pro", sans-serif;
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 12px;
+        margin: 10px 0;
+    }
+    .mrr-validator-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 8px;
+    }
+    .mrr-section {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 13px;
+    }
+    .mrr-icon {
+        width: 18px;
+        height: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+    }
+    .mrr-valid { color: #28a745; }
+    .mrr-invalid { color: #dc3545; }
+    .mrr-warning { color: #ffc107; }
+    .mrr-pending { color: #6c757d; }
+    .mrr-label {
+        color: #555;
+        min-width: 110px;
+    }
+    .mrr-value {
+        color: #333;
+        font-weight: 500;
+    }
+    .mrr-match {
+        color: #28a745;
+        font-size: 11px;
+        margin-left: 4px;
+    }
+    .mrr-hint {
+        font-size: 11px;
+        color: #888;
+        font-style: italic;
+        margin-top: 8px;
+    }
+    /* Lookup section styles */
+    .mrr-lookup-section {
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px solid #e0e0e0;
+    }
+    .mrr-lookup-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: #555;
+        margin-bottom: 8px;
+    }
+    .mrr-lookup-row {
+        display: flex;
+        gap: 12px;
+    }
+    .mrr-lookup-col {
+        flex: 1;
+    }
+    .mrr-lookup-label {
+        font-size: 11px;
+        color: #666;
+        margin-bottom: 4px;
+    }
+    .mrr-search-input {
+        width: 100%;
+        padding: 6px 8px;
+        font-size: 12px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        box-sizing: border-box;
+    }
+    .mrr-search-input:focus {
+        outline: none;
+        border-color: #ff4b4b;
+    }
+    .mrr-suggestions {
+        max-height: 150px;
+        overflow-y: auto;
+        overflow-x: hidden;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: white;
+        margin-top: 4px;
+        display: none;
+        scrollbar-width: thin;
+        scrollbar-color: #888 #f0f0f0;
+    }
+    .mrr-suggestions::-webkit-scrollbar {
+        width: 8px;
+    }
+    .mrr-suggestions::-webkit-scrollbar-track {
+        background: #f0f0f0;
+        border-radius: 4px;
+    }
+    .mrr-suggestions::-webkit-scrollbar-thumb {
+        background: #888;
+        border-radius: 4px;
+    }
+    .mrr-suggestions::-webkit-scrollbar-thumb:hover {
+        background: #666;
+    }
+    .mrr-suggestions.active {
+        display: block;
+    }
+    .mrr-suggestion {
+        padding: 6px 8px;
+        font-size: 11px;
+        cursor: pointer;
+        border-bottom: 1px solid #eee;
+    }
+    .mrr-suggestion:last-child {
+        border-bottom: none;
+    }
+    .mrr-suggestion:hover {
+        background: #f0f2f6;
+    }
+    .mrr-no-results {
+        padding: 6px 8px;
+        font-size: 11px;
+        color: #888;
+        font-style: italic;
+    }
+</style>
+<div class="mrr-validator" id="mrr-validator-widget">
+    <div class="mrr-validator-title">📋 Query Validator</div>
+    <div class="mrr-section" id="mrr-verb">
+        <span class="mrr-icon mrr-pending" id="mrr-verb-icon">○</span>
+        <span class="mrr-label">Action:</span>
+        <span class="mrr-value" id="mrr-verb-value">—</span>
+    </div>
+    <div class="mrr-section" id="mrr-type">
+        <span class="mrr-icon mrr-pending" id="mrr-type-icon">○</span>
+        <span class="mrr-label">Ring Type:</span>
+        <span class="mrr-value" id="mrr-type-value">—</span>
+    </div>
+    <div class="mrr-section" id="mrr-prep">
+        <span class="mrr-icon mrr-pending" id="mrr-prep-icon">○</span>
+        <span class="mrr-label">Preposition:</span>
+        <span class="mrr-value" id="mrr-prep-value">—</span>
+    </div>
+    <div class="mrr-section" id="mrr-location-a">
+        <span class="mrr-icon mrr-pending" id="mrr-location-a-icon">○</span>
+        <span class="mrr-label">Location A:</span>
+        <span class="mrr-value" id="mrr-location-a-value">—</span>
+    </div>
+    <div class="mrr-section" id="mrr-target">
+        <span class="mrr-icon mrr-pending" id="mrr-target-icon">○</span>
+        <span class="mrr-label">Target Prep:</span>
+        <span class="mrr-value" id="mrr-target-value">—</span>
+    </div>
+    <div class="mrr-section" id="mrr-location-b">
+        <span class="mrr-icon mrr-pending" id="mrr-location-b-icon">○</span>
+        <span class="mrr-label">Location B:</span>
+        <span class="mrr-value" id="mrr-location-b-value">—</span>
+    </div>
+    <div class="mrr-hint" id="mrr-hint">Type your command above to see validation...</div>
+
+    <!-- Lookup Section -->
+    <div class="mrr-lookup-section">
+        <div class="mrr-lookup-title">🔍 Location Lookup (countries + cities)</div>
+        <div class="mrr-lookup-row">
+            <div class="mrr-lookup-col">
+                <div class="mrr-lookup-label">Location A Search:</div>
+                <input type="text" class="mrr-search-input" id="mrr-location-a-search" placeholder="Type to search locations..." autocomplete="off">
+                <div class="mrr-suggestions" id="mrr-location-a-suggestions"></div>
+            </div>
+            <div class="mrr-lookup-col">
+                <div class="mrr-lookup-label">Location B Search:</div>
+                <input type="text" class="mrr-search-input" id="mrr-location-b-search" placeholder="Type to search locations..." autocomplete="off">
+                <div class="mrr-suggestions" id="mrr-location-b-suggestions"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function() {
+        // Valid options for minimum range ring
+        const validVerbs = ['generate', 'create', 'build', 'show', 'calculate', 'compute'];
+        const validTypes = ['minimum range ring', 'minimum distance', 'min distance', 'min range'];
+        const validPreps = ['between', 'from'];
+        const validTargets = ['and', 'to'];
+        const validCountries = {{COUNTRIES_JSON}};
+        const validCities = {{CITIES_JSON}};
+        const countriesDisplay = {{COUNTRIES_DISPLAY_JSON}};
+        const citiesDisplay = {{CITIES_DISPLAY_JSON}};
+        const locationsDisplay = Array.from(new Set([...countriesDisplay, ...citiesDisplay])).sort();
+
+        function fuzzyMatch(input, options) {
+            if (!input) return null;
+            const lower = input.toLowerCase().trim();
+            if (options.includes(lower)) return lower;
+            const prefixMatch = options.find(opt => opt.startsWith(lower));
+            if (prefixMatch) return prefixMatch;
+            for (const opt of options) {
+                const words = opt.split(/[\s,]+/);
+                for (const word of words) {
+                    if (word.startsWith(lower) || lower.startsWith(word)) {
+                        return opt;
+                    }
+                }
+            }
+            const containsMatch = options.find(opt => opt.includes(lower) || lower.includes(opt));
+            return containsMatch || null;
+        }
+
+        function getFuzzyMatches(input, displayOptions, maxResults = 10) {
+            if (!input || input.length < 1) return displayOptions.slice(0, maxResults);
+            const lower = input.toLowerCase().trim();
+
+            const scored = displayOptions.map(opt => {
+                const optLower = opt.toLowerCase();
+                let score = 0;
+                if (optLower === lower) score = 100;
+                else if (optLower.startsWith(lower)) score = 80;
+                else {
+                    const words = optLower.split(/[\s,]+/);
+                    for (const word of words) {
+                        if (word.startsWith(lower)) {
+                            score = 70;
+                            break;
+                        }
+                    }
+                }
+                if (score === 0 && optLower.includes(lower)) score = 50;
+                if (score === 0) {
+                    const words = optLower.split(/[\s,]+/);
+                    for (const word of words) {
+                        if (lower.includes(word) && word.length > 2) {
+                            score = 40;
+                            break;
+                        }
+                    }
+                }
+                return { opt, score };
+            });
+
+            return scored
+                .filter(s => s.score > 0)
+                .sort((a, b) => b.score - a.score)
+                .slice(0, maxResults)
+                .map(s => s.opt);
+        }
+
+        function setStatus(id, valid, value, matched) {
+            const icon = document.getElementById(id + '-icon');
+            const valueEl = document.getElementById(id + '-value');
+            if (!icon || !valueEl) return;
+
+            if (valid === 'exact') {
+                icon.textContent = '✓';
+                icon.className = 'mrr-icon mrr-valid';
+            } else if (valid === 'fuzzy') {
+                icon.textContent = '⚠';
+                icon.className = 'mrr-icon mrr-warning';
+            } else if (valid === false) {
+                icon.textContent = '✗';
+                icon.className = 'mrr-icon mrr-invalid';
+            } else {
+                icon.textContent = '○';
+                icon.className = 'mrr-icon mrr-pending';
+            }
+
+            if (value && matched && matched !== value.toLowerCase()) {
+                valueEl.innerHTML = value + '<span class="mrr-match"> (use: ' + matched + ')</span>';
+            } else {
+                valueEl.textContent = value || '—';
+            }
+        }
+
+        function parseAndValidate(text) {
+            const hint = document.getElementById('mrr-hint');
+            if (!text || text.trim().length < 3) {
+                ['mrr-verb', 'mrr-type', 'mrr-prep', 'mrr-location-a', 'mrr-target', 'mrr-location-b'].forEach(id => {
+                    setStatus(id, null, '—');
+                });
+                if (hint) hint.textContent = 'Type your command above to see validation...';
+                return;
+            }
+
+            const lower = text.toLowerCase().trim();
+
+            if (lower.includes('reverse') || lower.includes('launch envelope')) {
+                ['mrr-verb', 'mrr-type', 'mrr-prep', 'mrr-location-a', 'mrr-target', 'mrr-location-b'].forEach(id => {
+                    setStatus(id, null, '—');
+                });
+                if (hint) hint.textContent = 'This looks like a Reverse Range Ring command. See Reverse Range Ring tab.';
+                return;
+            }
+
+            if (lower.includes('multiple range ring') || lower.includes('multiple range rings') || lower.includes('multiple rings')) {
+                ['mrr-verb', 'mrr-type', 'mrr-prep', 'mrr-location-a', 'mrr-target', 'mrr-location-b'].forEach(id => {
+                    setStatus(id, null, '—');
+                });
+                if (hint) hint.textContent = 'This looks like a Multiple Range Ring command. See Multiple Range Ring tab.';
+                return;
+            }
+
+            if (lower.includes('single range ring') || lower.includes('single ring')) {
+                ['mrr-verb', 'mrr-type', 'mrr-prep', 'mrr-location-a', 'mrr-target', 'mrr-location-b'].forEach(id => {
+                    setStatus(id, null, '—');
+                });
+                if (hint) hint.textContent = 'This looks like a Single Range Ring command. See Single Range Ring tab.';
+                return;
+            }
+
+            // Verb validation
+            let verbMatch = validVerbs.find(v => lower.startsWith(v));
+            setStatus('mrr-verb', verbMatch ? 'exact' : false, verbMatch || (lower.split(' ')[0] || ''), verbMatch);
+
+            // Type validation
+            let typeMatch = validTypes.find(t => lower.includes(t));
+            setStatus('mrr-type', typeMatch ? 'exact' : false, typeMatch || '—', typeMatch);
+
+            // Preposition validation
+            let prepMatch = validPreps.find(p => lower.includes(' ' + p + ' ') || lower.endsWith(' ' + p));
+            setStatus('mrr-prep', prepMatch ? 'exact' : false, prepMatch || '—', prepMatch);
+
+            let locationA = null;
+            let locationB = null;
+            let targetPrep = null;
+
+            if (prepMatch) {
+                const typeEnd = typeMatch ? lower.indexOf(typeMatch) + typeMatch.length : 0;
+                const prepToken = ' ' + prepMatch;
+                const prepIdx = lower.indexOf(prepToken + ' ', typeEnd);
+                let afterPrep = '';
+
+                if (prepIdx >= 0) {
+                    afterPrep = lower.substring(prepIdx + prepMatch.length + 2);
+                } else if (lower.endsWith(prepToken)) {
+                    afterPrep = '';
+                }
+
+                if (afterPrep !== '') {
+                    const targetMatch = validTargets.find(tp => (
+                        afterPrep.includes(' ' + tp + ' ') || afterPrep.endsWith(' ' + tp)
+                    ));
+                    if (targetMatch) {
+                        const targetIdx = afterPrep.indexOf(' ' + targetMatch + ' ');
+                        targetPrep = targetMatch;
+                        if (targetIdx >= 0) {
+                            locationA = afterPrep.substring(0, targetIdx).trim();
+                            locationB = afterPrep.substring(targetIdx + targetMatch.length + 2).trim().replace(/\.$/, '');
+                        } else {
+                            locationA = afterPrep.substring(0, afterPrep.length - targetMatch.length - 1).trim();
+                            locationB = '';
+                        }
+                    } else {
+                        locationA = afterPrep.trim();
+                    }
+                }
+            }
+
+            const locationOptions = [...validCountries, ...validCities];
+            let locationAStatus = false;
+            let locationAMatch = null;
+            if (locationA) {
+                const locationALower = locationA.toLowerCase();
+                if (locationOptions.includes(locationALower)) {
+                    locationAStatus = 'exact';
+                    locationAMatch = locationALower;
+                } else {
+                    locationAMatch = fuzzyMatch(locationA, locationOptions);
+                    if (locationAMatch) {
+                        locationAStatus = 'fuzzy';
+                    }
+                }
+            }
+            setStatus('mrr-location-a', locationAStatus, locationA || '—', locationAMatch);
+
+            let locationBStatus = false;
+            let locationBMatch = null;
+            if (locationB) {
+                const locationBLower = locationB.toLowerCase();
+                if (locationOptions.includes(locationBLower)) {
+                    locationBStatus = 'exact';
+                    locationBMatch = locationBLower;
+                } else {
+                    locationBMatch = fuzzyMatch(locationB, locationOptions);
+                    if (locationBMatch) {
+                        locationBStatus = 'fuzzy';
+                    }
+                }
+            }
+            setStatus('mrr-location-b', locationBStatus, locationB || '—', locationBMatch);
+
+            setStatus('mrr-target', targetPrep ? 'exact' : false, targetPrep || '—', targetPrep);
+
+            const allExact = verbMatch && typeMatch && prepMatch && (locationAStatus === 'exact') && targetPrep && (locationBStatus === 'exact');
+            const allValid = verbMatch && typeMatch && prepMatch && locationAMatch && targetPrep && locationBMatch;
+            const hasFuzzy = locationAStatus === 'fuzzy' || locationBStatus === 'fuzzy';
+            const partialValid = typeMatch || locationAMatch || locationBMatch;
+
+            if (allExact) {
+                if (hint) hint.textContent = '✅ Query looks valid! Click Execute to proceed.';
+            } else if (allValid && hasFuzzy) {
+                if (hint) hint.textContent = '⚠️ Query may work, but check ⚠ items for exact format.';
+            } else if (partialValid) {
+                if (hint) hint.textContent = '⚠️ Some fields need attention. Check the items marked with ✗ or ⚠';
+            } else {
+                if (hint) hint.textContent = 'Format: Calculate minimum distance between [Location A] and [Location B]';
+            }
+        }
+
+        function setupLookup(inputId, suggestionsId, displayOptions) {
+            const input = document.getElementById(inputId);
+            const suggestions = document.getElementById(suggestionsId);
+            if (!input || !suggestions) return;
+
+            input.addEventListener('input', function() {
+                const val = this.value;
+                const matches = getFuzzyMatches(val, displayOptions, 10);
+
+                if (matches.length > 0) {
+                    suggestions.innerHTML = matches.map(m =>
+                        '<div class="mrr-suggestion">' + m + '</div>'
+                    ).join('');
+                    suggestions.classList.add('active');
+                } else {
+                    suggestions.innerHTML = '<div class="mrr-no-results">No matches found</div>';
+                    suggestions.classList.add('active');
+                }
+            });
+
+            input.addEventListener('focus', function() {
+                if (this.value.length >= 1 || suggestions.innerHTML) {
+                    suggestions.classList.add('active');
+                }
+            });
+
+            input.addEventListener('blur', function() {
+                setTimeout(() => suggestions.classList.remove('active'), 200);
+            });
+
+            suggestions.addEventListener('click', function(e) {
+                if (e.target.classList.contains('mrr-suggestion')) {
+                    input.value = e.target.textContent;
+                    suggestions.classList.remove('active');
+                }
+            });
+        }
+
+        setupLookup('mrr-location-a-search', 'mrr-location-a-suggestions', locationsDisplay);
+        setupLookup('mrr-location-b-search', 'mrr-location-b-suggestions', locationsDisplay);
+
+        function attachListener() {
+            const textareas = window.parent.document.querySelectorAll('textarea');
+            for (const ta of textareas) {
+                if (ta.placeholder && ta.placeholder.includes('Type a question')) {
+                    ta.addEventListener('input', function(e) {
+                        parseAndValidate(e.target.value);
+                    });
+                    parseAndValidate(ta.value);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        let attempts = 0;
+        const maxAttempts = 20;
+        const tryAttach = setInterval(function() {
+            attempts++;
+            if (attachListener() || attempts >= maxAttempts) {
+                clearInterval(tryAttach);
+            }
+        }, 200);
+    })();
+</script>

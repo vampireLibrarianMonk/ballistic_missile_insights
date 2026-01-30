@@ -1,0 +1,80 @@
+{
+  "metadata": {
+    "name": "Custom POI Launch Points",
+    "description": "Publicly known real-world launch and test sites for range ring generation",
+    "coordinate_system": "WGS84",
+    "point_count": 10
+  },
+  "points": [
+    {
+      "id": "POI-01",
+      "name": "Cape Canaveral Space Force Station",
+      "country": "United States",
+      "lat": 28.3922,
+      "lon": -80.6077
+    },
+    {
+      "id": "POI-02",
+      "name": "Vandenberg Space Force Base",
+      "country": "United States",
+      "lat": 34.7420,
+      "lon": -120.5724
+    },
+    {
+      "id": "POI-03",
+      "name": "Baikonur Cosmodrome",
+      "country": "Kazakhstan",
+      "lat": 45.9647,
+      "lon": 63.3050
+    },
+    {
+      "id": "POI-04",
+      "name": "Plesetsk Cosmodrome",
+      "country": "Russia",
+      "lat": 62.9256,
+      "lon": 40.5776
+    },
+    {
+      "id": "POI-05",
+      "name": "Jiuquan Satellite Launch Center",
+      "country": "China",
+      "lat": 40.9606,
+      "lon": 100.2983
+    },
+    {
+      "id": "POI-06",
+      "name": "Satish Dhawan Space Centre",
+      "country": "India",
+      "lat": 13.7199,
+      "lon": 80.2304
+    },
+    {
+      "id": "POI-07",
+      "name": "Tanegashima Space Center",
+      "country": "Japan",
+      "lat": 30.4010,
+      "lon": 130.9760
+    },
+    {
+      "id": "POI-08",
+      "name": "Guiana Space Centre",
+      "country": "France (French Guiana)",
+      "lat": 5.2360,
+      "lon": -52.7680
+    },
+    {
+      "id": "POI-09",
+      "name": "Sohae Satellite Launching Station",
+      "country": "North Korea",
+      "lat": 39.6603,
+      "lon": 124.7056
+    },
+    {
+      "id": "POI-10",
+      "name": "Woomera Test Range",
+      "country": "Australia",
+      "lat": -31.1444,
+      "lon": 136.8183
+    }
+  ]
+}

@@ -1,0 +1,502 @@
+<style>
+    .murr-validator {
+        font-family: "Source Sans Pro", sans-serif;
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 12px;
+        margin: 10px 0;
+    }
+    .murr-validator-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 8px;
+    }
+    .murr-section {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 13px;
+    }
+    .murr-icon {
+        width: 18px;
+        height: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+    }
+    .murr-valid { color: #28a745; }
+    .murr-invalid { color: #dc3545; }
+    .murr-warning { color: #ffc107; }
+    .murr-pending { color: #6c757d; }
+    .murr-label {
+        color: #555;
+        min-width: 110px;
+    }
+    .murr-value {
+        color: #333;
+        font-weight: 500;
+    }
+    .murr-match {
+        color: #28a745;
+        font-size: 11px;
+        margin-left: 4px;
+    }
+    .murr-hint {
+        font-size: 11px;
+        color: #888;
+        font-style: italic;
+        margin-top: 8px;
+    }
+    /* Lookup section styles */
+    .murr-lookup-section {
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px solid #e0e0e0;
+    }
+    .murr-lookup-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: #555;
+        margin-bottom: 8px;
+    }
+    .murr-lookup-label {
+        font-size: 11px;
+        color: #666;
+        margin-bottom: 4px;
+    }
+    .murr-search-input {
+        width: 100%;
+        padding: 6px 8px;
+        font-size: 12px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        box-sizing: border-box;
+    }
+    .murr-search-input:focus {
+        outline: none;
+        border-color: #ff4b4b;
+    }
+    .murr-suggestions {
+        max-height: 150px;
+        overflow-y: auto;
+        overflow-x: hidden;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: white;
+        margin-top: 4px;
+        display: none;
+        scrollbar-width: thin;
+        scrollbar-color: #888 #f0f0f0;
+    }
+    .murr-suggestions::-webkit-scrollbar {
+        width: 8px;
+    }
+    .murr-suggestions::-webkit-scrollbar-track {
+        background: #f0f0f0;
+        border-radius: 4px;
+    }
+    .murr-suggestions::-webkit-scrollbar-thumb {
+        background: #888;
+        border-radius: 4px;
+    }
+    .murr-suggestions::-webkit-scrollbar-thumb:hover {
+        background: #666;
+    }
+    .murr-suggestions.active {
+        display: block;
+    }
+    .murr-suggestion {
+        padding: 6px 8px;
+        font-size: 11px;
+        cursor: pointer;
+        border-bottom: 1px solid #eee;
+    }
+    .murr-suggestion:last-child {
+        border-bottom: none;
+    }
+    .murr-suggestion:hover {
+        background: #f0f2f6;
+    }
+    .murr-no-results {
+        padding: 6px 8px;
+        font-size: 11px;
+        color: #888;
+        font-style: italic;
+    }
+</style>
+<div class="murr-validator" id="murr-validator-widget">
+    <div class="murr-validator-title">📋 Query Validator</div>
+    <div class="murr-section" id="murr-verb">
+        <span class="murr-icon murr-pending" id="murr-verb-icon">○</span>
+        <span class="murr-label">Action:</span>
+        <span class="murr-value" id="murr-verb-value">—</span>
+    </div>
+    <div class="murr-section" id="murr-type">
+        <span class="murr-icon murr-pending" id="murr-type-icon">○</span>
+        <span class="murr-label">Ring Type:</span>
+        <span class="murr-value" id="murr-type-value">—</span>
+    </div>
+    <div class="murr-section" id="murr-from">
+        <span class="murr-icon murr-pending" id="murr-from-icon">○</span>
+        <span class="murr-label">Preposition:</span>
+        <span class="murr-value" id="murr-from-value">—</span>
+    </div>
+    <div class="murr-section" id="murr-country">
+        <span class="murr-icon murr-pending" id="murr-country-icon">○</span>
+        <span class="murr-label">Country:</span>
+        <span class="murr-value" id="murr-country-value">—</span>
+    </div>
+    <div class="murr-section" id="murr-at">
+        <span class="murr-icon murr-pending" id="murr-at-icon">○</span>
+        <span class="murr-label">Distance Prep:</span>
+        <span class="murr-value" id="murr-at-value">—</span>
+    </div>
+    <div class="murr-section" id="murr-distances">
+        <span class="murr-icon murr-pending" id="murr-distances-icon">○</span>
+        <span class="murr-label" id="murr-distances-label">Distances:</span>
+        <span class="murr-value" id="murr-distances-value">—</span>
+    </div>
+    <div class="murr-section" id="murr-unit">
+        <span class="murr-icon murr-pending" id="murr-unit-icon">○</span>
+        <span class="murr-label">Distance Unit:</span>
+        <span class="murr-value" id="murr-unit-value">—</span>
+    </div>
+    <div class="murr-section" id="murr-missiles">
+        <span class="murr-icon murr-pending" id="murr-missiles-icon">○</span>
+        <span class="murr-label" id="murr-missiles-label">Missile Names:</span>
+        <span class="murr-value" id="murr-missiles-value">—</span>
+    </div>
+    <div class="murr-hint" id="murr-hint">Type your command above to see validation...</div>
+
+    <!-- Lookup Section -->
+    <div class="murr-lookup-section">
+        <div class="murr-lookup-title">🔍 Country Lookup (search to find exact format)</div>
+        <div class="murr-lookup-label">Country Search:</div>
+        <input type="text" class="murr-search-input" id="murr-country-search" placeholder="Type to search countries..." autocomplete="off">
+        <div class="murr-suggestions" id="murr-country-suggestions"></div>
+    </div>
+</div>
+
+<script>
+    (function() {
+        const validVerbs = ['generate', 'create', 'build', 'show'];
+        const validTypes = ['multiple range rings', 'multiple range ring', 'multiple rings'];
+        const validFromPreps = ['from', 'for'];
+        const validAtPreps = ['at'];
+        const validUnits = ['km', 'mi', 'nm'];
+        const validCountries = {{COUNTRIES_JSON}};
+        const countriesDisplay = {{COUNTRIES_DISPLAY_JSON}};
+
+        function fuzzyMatch(input, options) {
+            if (!input) return null;
+            const lower = input.toLowerCase().trim();
+            if (options.includes(lower)) return lower;
+            const prefixMatch = options.find(opt => opt.startsWith(lower));
+            if (prefixMatch) return prefixMatch;
+            for (const opt of options) {
+                const words = opt.split(/[\s,]+/);
+                for (const word of words) {
+                    if (word.startsWith(lower) || lower.startsWith(word)) {
+                        return opt;
+                    }
+                }
+            }
+            const containsMatch = options.find(opt => opt.includes(lower) || lower.includes(opt));
+            return containsMatch || null;
+        }
+
+        function getFuzzyMatches(input, displayOptions, maxResults = 10) {
+            if (!input || input.length < 1) return displayOptions.slice(0, maxResults);
+            const lower = input.toLowerCase().trim();
+
+            const scored = displayOptions.map(opt => {
+                const optLower = opt.toLowerCase();
+                let score = 0;
+                if (optLower === lower) score = 100;
+                else if (optLower.startsWith(lower)) score = 80;
+                else {
+                    const words = optLower.split(/[\s,]+/);
+                    for (const word of words) {
+                        if (word.startsWith(lower)) {
+                            score = 70;
+                            break;
+                        }
+                    }
+                }
+                if (score === 0 && optLower.includes(lower)) score = 50;
+                if (score === 0) {
+                    const words = optLower.split(/[\s,]+/);
+                    for (const word of words) {
+                        if (lower.includes(word) && word.length > 2) {
+                            score = 40;
+                            break;
+                        }
+                    }
+                }
+                return { opt, score };
+            });
+
+            return scored
+                .filter(s => s.score > 0)
+                .sort((a, b) => b.score - a.score)
+                .slice(0, maxResults)
+                .map(s => s.opt);
+        }
+
+        function setStatus(id, valid, value, matched) {
+            const icon = document.getElementById(id + '-icon');
+            const valueEl = document.getElementById(id + '-value');
+            if (!icon || !valueEl) return;
+
+            if (valid === 'exact') {
+                icon.textContent = '✓';
+                icon.className = 'murr-icon murr-valid';
+            } else if (valid === 'fuzzy') {
+                icon.textContent = '⚠';
+                icon.className = 'murr-icon murr-warning';
+            } else if (valid === false) {
+                icon.textContent = '✗';
+                icon.className = 'murr-icon murr-invalid';
+            } else {
+                icon.textContent = '○';
+                icon.className = 'murr-icon murr-pending';
+            }
+
+            if (value && matched && matched !== value.toLowerCase()) {
+                valueEl.innerHTML = value + '<span class="murr-match"> (use: ' + matched + ')</span>';
+            } else {
+                valueEl.textContent = value || '—';
+            }
+        }
+
+        function parseAndValidate(text) {
+            const hint = document.getElementById('murr-hint');
+            if (!text || text.trim().length < 3) {
+                ['murr-verb', 'murr-type', 'murr-from', 'murr-country', 'murr-at', 'murr-distances', 'murr-unit', 'murr-missiles']
+                    .forEach(id => setStatus(id, null, '—'));
+                if (hint) hint.textContent = 'Type your command above to see validation...';
+                return;
+            }
+
+            const lower = text.toLowerCase().trim();
+
+            if (lower.includes('minimum') || lower.includes('min distance') || lower.includes('minimum distance')) {
+                ['murr-verb', 'murr-type', 'murr-from', 'murr-country', 'murr-at', 'murr-distances', 'murr-unit', 'murr-missiles']
+                    .forEach(id => setStatus(id, null, '—'));
+                if (hint) hint.textContent = 'This looks like a Minimum Range Ring command. See Minimum Range Ring tab.';
+                return;
+            }
+
+            if (lower.includes('reverse') || lower.includes('launch envelope')) {
+                ['murr-verb', 'murr-type', 'murr-from', 'murr-country', 'murr-at', 'murr-distances', 'murr-unit', 'murr-missiles']
+                    .forEach(id => setStatus(id, null, '—'));
+                if (hint) hint.textContent = 'This looks like a Reverse Range Ring command. See Reverse Range Ring tab.';
+                return;
+            }
+
+            if (lower.includes('single range ring') || lower.includes('single ring')) {
+                ['murr-verb', 'murr-type', 'murr-from', 'murr-country', 'murr-at', 'murr-distances', 'murr-unit', 'murr-missiles']
+                    .forEach(id => setStatus(id, null, '—'));
+                if (hint) hint.textContent = 'This looks like a Single Range Ring command. See Single Range Ring tab.';
+                return;
+            }
+
+            let verbMatch = validVerbs.find(v => lower.startsWith(v));
+            setStatus('murr-verb', verbMatch ? 'exact' : false, verbMatch || (lower.split(' ')[0] || ''), verbMatch);
+
+            let typeMatch = validTypes.find(t => lower.includes(t));
+            setStatus('murr-type', typeMatch ? 'exact' : false, typeMatch || '—', typeMatch);
+
+            let fromMatch = null;
+            const typeEnd = typeMatch ? lower.indexOf(typeMatch) + typeMatch.length : 0;
+            const afterType = lower.substring(typeEnd);
+            const fromRegex = /\b(from|for)\b\s*(.*)/;
+            const fromRegexMatch = afterType.match(fromRegex);
+            if (fromRegexMatch) {
+                fromMatch = fromRegexMatch[1];
+            }
+            setStatus('murr-from', fromMatch ? 'exact' : false, fromMatch || '—', fromMatch);
+
+            let atMatch = null;
+            let country = null;
+            let distances = [];
+            let distancesText = null;
+            let unit = null;
+            let missileNames = [];
+            let missileNamesText = null;
+
+            if (fromMatch) {
+                let afterFrom = '';
+                if (fromRegexMatch) {
+                    afterFrom = (fromRegexMatch[2] || '').trim();
+                }
+
+                const atToken = ' at ';
+                const atIdx = afterFrom.indexOf(atToken);
+                if (atIdx >= 0) {
+                    atMatch = 'at';
+                    country = afterFrom.substring(0, atIdx).trim();
+                    const afterAt = afterFrom.substring(atIdx + atToken.length);
+                    const distanceSentence = afterAt.split('.')[0].trim();
+                    const unitMatch = distanceSentence.match(/(.+?)\s+(km|mi|nm)\b/);
+                    if (unitMatch) {
+                        distancesText = unitMatch[1].trim();
+                        unit = unitMatch[2];
+                        distances = distancesText.match(/[\d.]+/g) || [];
+                    } else if (distanceSentence.length) {
+                        distancesText = distanceSentence;
+                        distances = distancesText.match(/[\d.]+/g) || [];
+                    }
+                } else if (afterFrom.endsWith(' at')) {
+                    atMatch = 'at';
+                    country = afterFrom.substring(0, afterFrom.length - 3).trim();
+                } else {
+                    country = afterFrom.trim();
+                }
+            }
+
+            const namesMatch = lower.match(/missile names are (.+)$/);
+            if (namesMatch) {
+                missileNamesText = namesMatch[1].replace(/\.$/, '').trim();
+                missileNames = missileNamesText
+                    .replace(/\band\b/gi, ',')
+                    .split(',')
+                    .map(name => name.trim())
+                    .filter(Boolean);
+            }
+
+            let countryStatus = false;
+            let countryMatch = null;
+            if (country) {
+                const countryLower = country.toLowerCase();
+                if (validCountries.includes(countryLower)) {
+                    countryStatus = 'exact';
+                    countryMatch = countryLower;
+                } else {
+                    countryMatch = fuzzyMatch(country, validCountries);
+                    if (countryMatch) {
+                        countryStatus = 'fuzzy';
+                    }
+                }
+            }
+            setStatus('murr-country', countryStatus, country || '—', countryMatch);
+
+            setStatus('murr-at', atMatch ? 'exact' : false, atMatch || '—', atMatch);
+
+            const distancesStatus = distances.length ? 'exact' : false;
+            const distancesLabel = document.getElementById('murr-distances-label');
+            if (distancesLabel) {
+                distancesLabel.textContent = distances.length ? `Distances found (${distances.length}):` : 'Distances:';
+            }
+            setStatus('murr-distances', distancesStatus, distancesText || '—', distancesText ? distances.join(', ') : null);
+
+            const unitStatus = unit ? (validUnits.includes(unit) ? 'exact' : 'fuzzy') : false;
+            setStatus('murr-unit', unitStatus, unit || '—', unit);
+
+            let missileStatus = false;
+            if (missileNamesText) {
+                if (missileNames.length) {
+                    if (distances.length && missileNames.length !== distances.length) {
+                        missileStatus = 'fuzzy';
+                    } else {
+                        missileStatus = 'exact';
+                    }
+                }
+            }
+            const missilesLabel = document.getElementById('murr-missiles-label');
+            if (missilesLabel) {
+                missilesLabel.textContent = missileNames.length ? `Missile Names found (${missileNames.length}):` : 'Missile Names:';
+            }
+            setStatus(
+                'murr-missiles',
+                missileStatus,
+                missileNamesText || '—',
+                missileNamesText
+            );
+
+            const allExact = verbMatch && typeMatch && fromMatch && (countryStatus === 'exact')
+                && atMatch && distances.length && unit && (missileStatus === 'exact');
+            const allValid = verbMatch && typeMatch && fromMatch && countryMatch
+                && atMatch && distances.length && unit && missileStatus;
+            const hasFuzzy = countryStatus === 'fuzzy' || missileStatus === 'fuzzy';
+            const partialValid = typeMatch || countryMatch || distances.length;
+
+            if (allExact) {
+                if (hint) hint.textContent = '✅ Query looks valid! Click Execute to proceed.';
+            } else if (allValid && hasFuzzy) {
+                if (hint) hint.textContent = '⚠️ Query may work, but check ⚠ items for exact format.';
+            } else if (partialValid) {
+                if (hint) hint.textContent = '⚠️ Some fields need attention. Check the items marked with ✗ or ⚠';
+            } else {
+                if (hint) hint.textContent = 'Format: Generate multiple range rings from [Country] at [distances] [unit]. The respective missile names are [names].';
+            }
+        }
+
+        function setupLookup(inputId, suggestionsId, displayOptions) {
+            const input = document.getElementById(inputId);
+            const suggestions = document.getElementById(suggestionsId);
+            if (!input || !suggestions) return;
+
+            input.addEventListener('input', function() {
+                const val = this.value;
+                const matches = getFuzzyMatches(val, displayOptions, 10);
+
+                if (matches.length > 0) {
+                    suggestions.innerHTML = matches.map(m =>
+                        '<div class="murr-suggestion">' + m + '</div>'
+                    ).join('');
+                    suggestions.classList.add('active');
+                } else {
+                    suggestions.innerHTML = '<div class="murr-no-results">No matches found</div>';
+                    suggestions.classList.add('active');
+                }
+            });
+
+            input.addEventListener('focus', function() {
+                if (this.value.length >= 1 || suggestions.innerHTML) {
+                    suggestions.classList.add('active');
+                }
+            });
+
+            input.addEventListener('blur', function() {
+                setTimeout(() => suggestions.classList.remove('active'), 200);
+            });
+
+            suggestions.addEventListener('click', function(e) {
+                if (e.target.classList.contains('murr-suggestion')) {
+                    input.value = e.target.textContent;
+                    suggestions.classList.remove('active');
+                }
+            });
+        }
+
+        setupLookup('murr-country-search', 'murr-country-suggestions', countriesDisplay);
+
+        function attachListener() {
+            const textareas = window.parent.document.querySelectorAll('textarea');
+            for (const ta of textareas) {
+                if (ta.placeholder && ta.placeholder.includes('Type a question')) {
+                    ta.addEventListener('input', function(e) {
+                        parseAndValidate(e.target.value);
+                    });
+                    parseAndValidate(ta.value);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        let attempts = 0;
+        const maxAttempts = 20;
+        const tryAttach = setInterval(function() {
+            attempts++;
+            if (attachListener() || attempts >= maxAttempts) {
+                clearInterval(tryAttach);
+            }
+        }, 200);
+    })();
+</script>

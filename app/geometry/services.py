@@ -449,6 +449,7 @@ def generate_multiple_range_rings(
         geodesic_method="geographiclib",
         origin_name=origin_name,
         origin_type=input_data.origin_type.value,
+        weapon_source=getattr(input_data, "weapon_source", None),
     )
     
     report_progress(0.98, "Creating output object...")
@@ -717,6 +718,18 @@ def generate_reverse_range_ring(
     )
     layers.append(target_layer)
     
+    # Expand bounds to include the target point for proper map zoom
+    # This ensures the interactive map shows both the launch region AND the target city
+    report_progress(0.88, "Expanding bounds to include target location...")
+    if bounds:
+        min_lon, min_lat, max_lon, max_lat = bounds
+        # Expand bounds to include target point
+        expanded_min_lon = min(min_lon, target_lon)
+        expanded_min_lat = min(min_lat, target_lat)
+        expanded_max_lon = max(max_lon, target_lon)
+        expanded_max_lat = max(max_lat, target_lat)
+        bounds = (expanded_min_lon, expanded_min_lat, expanded_max_lon, expanded_max_lat)
+    
     # Calculate processing time
     report_progress(0.90, "Computing processing statistics...")
     processing_time = (time.time() - start_time) * 1000
@@ -733,6 +746,8 @@ def generate_reverse_range_ring(
         range_classification=range_class.value if range_class else None,
         origin_name=input_data.target_point.name,
         origin_type="target_point",
+        weapon_name=getattr(input_data, "weapon_system", None),
+        weapon_source=getattr(input_data, "weapon_source", None),
     )
     
     report_progress(0.96, "Creating output object...")

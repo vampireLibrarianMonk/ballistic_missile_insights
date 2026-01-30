@@ -11,15 +11,16 @@ from app.ui.news.news_feed import NewsEvent, EventType
 
 
 def get_event_color(event_type: EventType) -> list[int]:
-    """Get RGB color for event type."""
+    """Get RGB color for event type matching the ORRG design spec."""
     colors = {
-        EventType.TEST: [255, 87, 51],        # Orange-red
-        EventType.LAUNCH: [255, 0, 0],        # Red
-        EventType.STATEMENT: [66, 135, 245],  # Blue
-        EventType.EXERCISE: [255, 193, 7],    # Yellow
-        EventType.DEVELOPMENT: [156, 39, 176], # Purple
-        EventType.DEPLOYMENT: [76, 175, 80],  # Green
-        EventType.OTHER: [158, 158, 158],     # Gray
+        EventType.LAUNCH: [255, 0, 0],        # Red - ● Launch Event
+        EventType.EXERCISE: [255, 193, 7],    # Yellow - ▲ Missile Exercise / Test
+        EventType.DEPLOYMENT: [76, 175, 80],  # Green - ■ Deployment / Readiness
+        EventType.NUCLEAR: [255, 0, 255],     # Magenta - ◆ Nuclear Test
+        EventType.TEST: [255, 87, 51],        # Orange-red - ◇ Other Strategic Testing
+        EventType.STATEMENT: [66, 135, 245],  # Blue - Policy/Statement
+        EventType.DEVELOPMENT: [156, 39, 176], # Purple - Development
+        EventType.OTHER: [158, 158, 158],     # Gray - Other
     }
     return colors.get(event_type, [100, 100, 100])
 

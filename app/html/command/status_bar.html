@@ -1,0 +1,176 @@
+<style>
+    .cmd-status-bar {
+        font-family: "Source Sans Pro", sans-serif;
+        padding: 8px 12px;
+        border-radius: 4px;
+        margin: 8px 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        transition: all 0.2s ease;
+    }
+    .cmd-status-empty {
+        background: #fff3cd;
+        border: 1px solid #ffc107;
+        color: #856404;
+    }
+    .cmd-status-partial {
+        background: #cce5ff;
+        border: 1px solid #007bff;
+        color: #004085;
+    }
+    .cmd-status-valid {
+        background: #d4edda;
+        border: 1px solid #28a745;
+        color: #155724;
+    }
+    .cmd-status-icon {
+        font-size: 16px;
+    }
+    .cmd-status-text {
+        flex: 1;
+    }
+    .cmd-status-hint {
+        font-size: 11px;
+        opacity: 0.8;
+    }
+</style>
+<div class="cmd-status-bar cmd-status-empty" id="cmd-status-bar">
+    <span class="cmd-status-icon" id="cmd-status-icon">⚠️</span>
+    <span class="cmd-status-text" id="cmd-status-text">{{EMPTY_MESSAGE}}</span>
+    <span class="cmd-status-hint" id="cmd-status-hint">See Help for command formats</span>
+</div>
+
+<script>
+    (function() {
+        // Include shared validation code
+        {{SHARED_JS}}
+
+        const V = ORRG_VALIDATION;
+        const M = V.messages;
+
+        const statusBar = document.getElementById('cmd-status-bar');
+        const statusIcon = document.getElementById('cmd-status-icon');
+        const statusText = document.getElementById('cmd-status-text');
+        const statusHint = document.getElementById('cmd-status-hint');
+
+        function updateStatus(text) {
+            if (!statusBar || !statusIcon || !statusText || !statusHint) return;
+
+            const trimmed = text.trim();
+
+            if (!trimmed || trimmed.length === 0) {
+                statusBar.className = 'cmd-status-bar cmd-status-empty';
+                statusIcon.textContent = '⚠️';
+                statusText.textContent = M.empty;
+                statusHint.textContent = 'See Help for command formats';
+                return;
+            }
+
+            if (trimmed.length < 10) {
+                statusBar.className = 'cmd-status-bar cmd-status-empty';
+                statusIcon.textContent = '✏️';
+                statusText.textContent = M.typing;
+                statusHint.textContent = 'Min 10 characters';
+                return;
+            }
+
+            const lower = trimmed.toLowerCase();
+            const cmdType = V.detectCommandType(lower);
+
+            if (cmdType.hasVerb && cmdType.hasReverse) {
+                // Validate as Reverse Range Ring using shared validator
+                const result = V.validateReverse(lower);
+
+                if (result.allExact) {
+                    statusBar.className = 'cmd-status-bar cmd-status-valid';
+                    statusIcon.textContent = '';
+                    statusText.textContent = M.validatorValid;
+                    statusHint.textContent = '';
+                } else {
+                    statusBar.className = 'cmd-status-bar cmd-status-empty';
+                    statusIcon.textContent = '';
+                    statusText.textContent = `⚠️ ${M.reverseFormat} ${M.seeHelp(result.toolName)}`;
+                    statusHint.textContent = '';
+                }
+            } else if (cmdType.hasVerb && cmdType.hasSingle) {
+                // Validate as Single Range Ring using shared validator
+                const result = V.validateSingle(lower);
+
+                if (result.allExact) {
+                    statusBar.className = 'cmd-status-bar cmd-status-valid';
+                    statusIcon.textContent = '';
+                    statusText.textContent = M.validatorValid;
+                    statusHint.textContent = '';
+                } else {
+                    statusBar.className = 'cmd-status-bar cmd-status-empty';
+                    statusIcon.textContent = '';
+                    statusText.textContent = `⚠️ ${M.singleFormat} ${M.seeHelp(result.toolName)}`;
+                    statusHint.textContent = '';
+                }
+            } else if (cmdType.hasVerb && cmdType.hasMultiple) {
+                const result = V.validateMultiple(lower);
+
+                if (result.allExact) {
+                    statusBar.className = 'cmd-status-bar cmd-status-valid';
+                    statusIcon.textContent = '';
+                    statusText.textContent = M.validatorValid;
+                    statusHint.textContent = '';
+                } else {
+                    statusBar.className = 'cmd-status-bar cmd-status-empty';
+                    statusIcon.textContent = '';
+                    statusText.textContent = `⚠️ ${M.multipleFormat} ${M.seeHelp(result.toolName)}`;
+                    statusHint.textContent = '';
+                }
+            } else if (cmdType.hasVerb && cmdType.hasMinimum) {
+                const result = V.validateMinimum(lower);
+
+                if (result.allExact) {
+                    statusBar.className = 'cmd-status-bar cmd-status-valid';
+                    statusIcon.textContent = '';
+                    statusText.textContent = M.validatorValid;
+                    statusHint.textContent = '';
+                } else {
+                    statusBar.className = 'cmd-status-bar cmd-status-empty';
+                    statusIcon.textContent = '';
+                    statusText.textContent = `⚠️ ${M.minimumFormat} ${M.seeHelp(result.toolName)}`;
+                    statusHint.textContent = '';
+                }
+            } else if (cmdType.hasVerb) {
+                statusBar.className = 'cmd-status-bar cmd-status-partial';
+                statusIcon.textContent = '🔍';
+                statusText.textContent = M.unrecognized;
+                statusHint.textContent = 'See Help for available command formats';
+            } else {
+                statusBar.className = 'cmd-status-bar cmd-status-partial';
+                statusIcon.textContent = '❓';
+                statusText.textContent = M.query;
+                statusHint.textContent = M.queryHint;
+            }
+        }
+
+        function attachListener() {
+            const textareas = window.parent.document.querySelectorAll('textarea');
+            for (const ta of textareas) {
+                if (ta.placeholder && ta.placeholder.includes('Type a question')) {
+                    ta.addEventListener('input', function(e) {
+                        updateStatus(e.target.value);
+                    });
+                    updateStatus(ta.value);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        let attempts = 0;
+        const maxAttempts = 20;
+        const tryAttach = setInterval(function() {
+            attempts++;
+            if (attachListener() || attempts >= maxAttempts) {
+                clearInterval(tryAttach);
+            }
+        }, 200);
+    })();
+</script>

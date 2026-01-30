@@ -10,6 +10,8 @@ import sys
 import feedparser
 from datetime import datetime, timezone
 
+from ..utilities import extract_country, extract_city
+
 AP_RSS = "https://apnews.com/hub/world-news?rss"
 
 KEYWORDS = [
@@ -55,6 +57,11 @@ def main() -> None:
         print(f"Summary:    {entry.get('summary','')[:300]}...")
         print(f"Source URL: {entry.get('link')}")
         print("Type:       Open-source missile-related news signal")
+
+        country = extract_country(entry.get('title'))
+        print(f"Country:     {country}")
+        city = extract_city(entry.get('title'))
+        print(f"City:     {city}")
 
         printed += 1
         if printed >= MAX_EVENTS:

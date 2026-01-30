@@ -1,0 +1,44 @@
+<style>
+    .loading-container {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        background: linear-gradient(90deg, #f0f2f6 0%, #e8eaef 50%, #f0f2f6 100%);
+        background-size: 200% 100%;
+        animation: shimmer 1.5s ease-in-out infinite;
+        border-radius: 4px;
+        margin: 10px 0;
+    }
+    @keyframes shimmer {
+        0% { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+    }
+    .loading-spinner {
+        width: 20px;
+        height: 20px;
+        border: 2px solid #d3d3d3;
+        border-top: 2px solid #ff4b4b;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    .loading-text {
+        font-family: "Source Sans Pro", sans-serif;
+        font-size: 14px;
+        color: #262730;
+    }
+    .loading-status {
+        font-size: 12px;
+        color: #666;
+        margin-left: auto;
+    }
+</style>
+<div class="loading-container">
+    <div class="loading-spinner"></div>
+    <span class="loading-text">📥 Preparing Download Options...</span>
+    <span class="loading-status" id="export-status">Generating exports...</span>
+</div>
