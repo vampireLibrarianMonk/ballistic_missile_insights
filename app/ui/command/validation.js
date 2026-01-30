@@ -300,15 +300,20 @@ const ORRG_VALIDATION = {
             }
         }
         
+        // Check if both locations are the same (invalid - must be different)
+        const normalizedA = (locationAMatch || (locationA ? locationA.toLowerCase().trim() : '')).toLowerCase();
+        const normalizedB = (locationBMatch || (locationB ? locationB.toLowerCase().trim() : '')).toLowerCase();
+        const sameLocation = normalizedA && normalizedB && normalizedA === normalizedB;
+
         const allExact = (
-            verbMatch && typeMatch && prepMatch && (locationAStatus === 'exact') && targetPrep && (locationBStatus === 'exact')
+            verbMatch && typeMatch && prepMatch && (locationAStatus === 'exact') && targetPrep && (locationBStatus === 'exact') && !sameLocation
         );
-        const allValid = verbMatch && typeMatch && prepMatch && locationAMatch && targetPrep && locationBMatch;
+        const allValid = verbMatch && typeMatch && prepMatch && locationAMatch && targetPrep && locationBMatch && !sameLocation;
         const hasFuzzy = locationAStatus === 'fuzzy' || locationBStatus === 'fuzzy';
         const partialValid = typeMatch || locationAMatch || locationBMatch;
         
         return {
-            allExact, allValid, hasFuzzy, partialValid, toolName: 'Minimum Range Ring',
+            allExact, allValid, hasFuzzy, partialValid, sameLocation, toolName: 'Minimum Range Ring',
             verbMatch, typeMatch, prepMatch, targetPrep,
             locationA, locationB, locationAStatus, locationBStatus, locationAMatch, locationBMatch
         };

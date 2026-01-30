@@ -57,6 +57,23 @@
         const statusText = document.getElementById('cmd-status-text');
         const statusHint = document.getElementById('cmd-status-hint');
 
+        // Find and control the Execute button in parent document
+        function setExecuteButtonState(enabled) {
+            try {
+                const buttons = window.parent.document.querySelectorAll('button');
+                for (const btn of buttons) {
+                    if (btn.innerText && btn.innerText.includes('Execute Command')) {
+                        // Hide button when query is not valid, show when valid
+                        btn.style.display = enabled ? '' : 'none';
+                        btn.disabled = !enabled;
+                        break;
+                    }
+                }
+            } catch (e) {
+                // Ignore cross-origin or access errors
+            }
+        }
+
         function updateStatus(text) {
             if (!statusBar || !statusIcon || !statusText || !statusHint) return;
 
@@ -67,6 +84,7 @@
                 statusIcon.textContent = '⚠️';
                 statusText.textContent = M.empty;
                 statusHint.textContent = 'See Help for command formats';
+                setExecuteButtonState(false);
                 return;
             }
 
@@ -75,6 +93,7 @@
                 statusIcon.textContent = '✏️';
                 statusText.textContent = M.typing;
                 statusHint.textContent = 'Min 10 characters';
+                setExecuteButtonState(false);
                 return;
             }
 
@@ -90,11 +109,20 @@
                     statusIcon.textContent = '';
                     statusText.textContent = M.validatorValid;
                     statusHint.textContent = '';
+                    setExecuteButtonState(true);
+                } else if (result.allValid) {
+                    // Fuzzy match - show warning, require exact match
+                    statusBar.className = 'cmd-status-bar cmd-status-partial';
+                    statusIcon.textContent = '⚠️';
+                    statusText.textContent = M.validatorFuzzy;
+                    statusHint.textContent = '';
+                    setExecuteButtonState(false);
                 } else {
                     statusBar.className = 'cmd-status-bar cmd-status-empty';
                     statusIcon.textContent = '';
                     statusText.textContent = `⚠️ ${M.reverseFormat} ${M.seeHelp(result.toolName)}`;
                     statusHint.textContent = '';
+                    setExecuteButtonState(false);
                 }
             } else if (cmdType.hasVerb && cmdType.hasSingle) {
                 // Validate as Single Range Ring using shared validator
@@ -105,11 +133,20 @@
                     statusIcon.textContent = '';
                     statusText.textContent = M.validatorValid;
                     statusHint.textContent = '';
+                    setExecuteButtonState(true);
+                } else if (result.allValid) {
+                    // Fuzzy match - show warning, require exact match
+                    statusBar.className = 'cmd-status-bar cmd-status-partial';
+                    statusIcon.textContent = '⚠️';
+                    statusText.textContent = M.validatorFuzzy;
+                    statusHint.textContent = '';
+                    setExecuteButtonState(false);
                 } else {
                     statusBar.className = 'cmd-status-bar cmd-status-empty';
                     statusIcon.textContent = '';
                     statusText.textContent = `⚠️ ${M.singleFormat} ${M.seeHelp(result.toolName)}`;
                     statusHint.textContent = '';
+                    setExecuteButtonState(false);
                 }
             } else if (cmdType.hasVerb && cmdType.hasMultiple) {
                 const result = V.validateMultiple(lower);
@@ -119,25 +156,49 @@
                     statusIcon.textContent = '';
                     statusText.textContent = M.validatorValid;
                     statusHint.textContent = '';
+                    setExecuteButtonState(true);
+                } else if (result.allValid) {
+                    // Fuzzy match - show warning, require exact match
+                    statusBar.className = 'cmd-status-bar cmd-status-partial';
+                    statusIcon.textContent = '⚠️';
+                    statusText.textContent = M.validatorFuzzy;
+                    statusHint.textContent = '';
+                    setExecuteButtonState(false);
                 } else {
                     statusBar.className = 'cmd-status-bar cmd-status-empty';
                     statusIcon.textContent = '';
                     statusText.textContent = `⚠️ ${M.multipleFormat} ${M.seeHelp(result.toolName)}`;
                     statusHint.textContent = '';
+                    setExecuteButtonState(false);
                 }
             } else if (cmdType.hasVerb && cmdType.hasMinimum) {
                 const result = V.validateMinimum(lower);
 
-                if (result.allExact) {
+                if (result.sameLocation) {
+                    statusBar.className = 'cmd-status-bar cmd-status-empty';
+                    statusIcon.textContent = '';
+                    statusText.textContent = '❌ Location A and Location B must be different! Cannot calculate distance to the same location.';
+                    statusHint.textContent = '';
+                    setExecuteButtonState(false);
+                } else if (result.allExact) {
                     statusBar.className = 'cmd-status-bar cmd-status-valid';
                     statusIcon.textContent = '';
                     statusText.textContent = M.validatorValid;
                     statusHint.textContent = '';
+                    setExecuteButtonState(true);
+                } else if (result.allValid) {
+                    // Fuzzy match - show warning, require exact match
+                    statusBar.className = 'cmd-status-bar cmd-status-partial';
+                    statusIcon.textContent = '⚠️';
+                    statusText.textContent = M.validatorFuzzy;
+                    statusHint.textContent = '';
+                    setExecuteButtonState(false);
                 } else {
                     statusBar.className = 'cmd-status-bar cmd-status-empty';
                     statusIcon.textContent = '';
                     statusText.textContent = `⚠️ ${M.minimumFormat} ${M.seeHelp(result.toolName)}`;
                     statusHint.textContent = '';
+                    setExecuteButtonState(false);
                 }
             } else if (cmdType.hasCustomPoi) {
                 const result = V.validateCustomPoi(lower);
@@ -147,32 +208,40 @@
                     statusIcon.textContent = '';
                     statusText.textContent = M.validatorValid;
                     statusHint.textContent = '';
+                    setExecuteButtonState(true);
                 } else if (result.allValid && result.hasFuzzy) {
+                    // Fuzzy match - show warning, require exact match
                     statusBar.className = 'cmd-status-bar cmd-status-partial';
                     statusIcon.textContent = '⚠️';
                     statusText.textContent = M.validatorFuzzy;
                     statusHint.textContent = '';
+                    setExecuteButtonState(false);
                 } else if (result.partialValid) {
                     statusBar.className = 'cmd-status-bar cmd-status-empty';
                     statusIcon.textContent = '';
                     statusText.textContent = '⚠️ Provide lat lon and range (min-max or max) with unit km/mi; separate POIs by semicolons/brackets.';
                     statusHint.textContent = M.customPoiRedirect;
+                    setExecuteButtonState(false);
                 } else {
                     statusBar.className = 'cmd-status-bar cmd-status-partial';
                     statusIcon.textContent = '❓';
                     statusText.textContent = 'Enter custom POI: e.g., "Custom POIs: [Name lat lon 300-1200 km]; [Name lat lon 800 mi]"';
                     statusHint.textContent = M.customPoiRedirect;
+                    setExecuteButtonState(false);
                 }
             } else if (cmdType.hasVerb) {
                 statusBar.className = 'cmd-status-bar cmd-status-partial';
                 statusIcon.textContent = '🔍';
                 statusText.textContent = M.unrecognized;
                 statusHint.textContent = 'See Help for available command formats';
+                setExecuteButtonState(false);
             } else {
+                // No recognized command type - could be a general query, allow execution
                 statusBar.className = 'cmd-status-bar cmd-status-partial';
                 statusIcon.textContent = '❓';
                 statusText.textContent = M.query;
                 statusHint.textContent = M.queryHint;
+                setExecuteButtonState(true);
             }
         }
 
@@ -183,12 +252,18 @@
                     ta.addEventListener('input', function(e) {
                         updateStatus(e.target.value);
                     });
+                    // Initial validation - also sets button state
                     updateStatus(ta.value);
                     return true;
                 }
             }
+            // Button should be disabled until validation passes
+            setExecuteButtonState(false);
             return false;
         }
+
+        // Also disable button immediately on script load
+        setExecuteButtonState(false);
 
         let attempts = 0;
         const maxAttempts = 20;
