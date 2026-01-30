@@ -13,9 +13,7 @@ from app.models.inputs import (
     DistanceUnit,
     PointOfInterest,
 )
-from app.rendering.pydeck_adapter import render_range_ring_output
 from app.ui.layout.global_state import (
-    is_analyst_mode,
     get_map_style,
     add_tool_output,
     get_tool_state,
@@ -34,8 +32,7 @@ from app.ui.tools.custom_poi.state import (
     set_prefill_data,
 )
 from app.ui.tools.shared import (
-    render_map_with_legend,
-    render_export_controls,
+    render_output_panel,
 )
 
 
@@ -287,22 +284,15 @@ def render_custom_poi_tool() -> None:
         if tool_state.get("outputs"):
             output = tool_state["outputs"][-1]
             
-            st.success("POI rings generated!")
-            st.subheader(output.title)
-            st.caption(output.subtitle)
-            
-            deck = render_range_ring_output(output, get_map_style())
-            render_map_with_legend(deck, output)
-            
-            if is_analyst_mode():
-                with st.expander("📊 Technical Metadata"):
-                    st.json({
-                        "output_id": str(output.output_id),
-                        "processing_time_ms": output.metadata.processing_time_ms if output.metadata else None,
-                        "poi_count": output.metadata.point_count if output.metadata else None,
-                    })
-            
-            render_export_controls(output, "custom_poi_range_ring")
+            render_output_panel(
+                output,
+                tool_key="custom_poi_range_ring",
+                map_style=get_map_style(),
+                extra_metadata={
+                    "processing_time_ms": getattr(output.metadata, "processing_time_ms", None),
+                    "poi_count": getattr(output.metadata, "point_count", None),
+                },
+            )
 
 
 __all__ = ["render_custom_poi_tool"]

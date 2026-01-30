@@ -356,10 +356,11 @@
             let city = null;
             let targetPrep = null;
 
+            let afterFrom = '';
             if (fromMatch && typeMatch) {
                 const fromIdx = lower.indexOf(' ' + fromMatch + ' ');
                 if (fromIdx >= 0) {
-                    const afterFrom = lower.substring(fromIdx + fromMatch.length + 2);
+                    afterFrom = lower.substring(fromIdx + fromMatch.length + 2).trim();
                     for (const tp of validTargetPreps) {
                         const tpIdx = afterFrom.indexOf(' ' + tp + ' ');
                         if (tpIdx >= 0) {
@@ -368,6 +369,11 @@
                             city = afterFrom.substring(tpIdx + tp.length + 2).trim().replace(/\.$/, '');
                             break;
                         }
+                    }
+                    // If no target preposition yet, still surface the country portion so users
+                    // get progressive feedback (country match) before typing the city.
+                    if (!targetPrep && afterFrom) {
+                        country = afterFrom.replace(/\.$/, '').trim();
                     }
                 }
             }
@@ -390,10 +396,12 @@
             setStatus('rrr-country', countryStatus, country || '—', countryMatch);
 
             // Target prep validation
-            setStatus('rrr-target', targetPrep ? 'exact' : false, targetPrep || '—', targetPrep);
+            // If no target preposition yet, keep it pending (not an error) so users see progressive checks.
+            const targetStatus = targetPrep ? 'exact' : (afterFrom ? null : false);
+            setStatus('rrr-target', targetStatus, targetPrep || '—', targetPrep);
 
             // City validation: exact vs fuzzy vs no match
-            let cityStatus = false;
+            let cityStatus = city ? false : null;
             let cityMatch = null;
             if (city) {
                 const cityLower = city.toLowerCase();

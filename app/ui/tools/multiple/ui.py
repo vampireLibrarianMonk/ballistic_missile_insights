@@ -17,9 +17,7 @@ from app.models.inputs import (
     PointOfInterest,
     MultipleRangeRingInput,
 )
-from app.rendering.pydeck_adapter import render_range_ring_output
 from app.ui.layout.global_state import (
-    is_analyst_mode,
     get_map_style,
     add_tool_output,
     get_tool_state,
@@ -27,8 +25,8 @@ from app.ui.layout.global_state import (
 )
 from app.ui.tools.multiple.state import get_multi_ranges, add_multi_range, remove_multi_range
 from app.ui.tools.shared import (
-    render_map_with_legend,
-    render_export_controls,
+    render_output_panel,
+    build_progress_callback,
 )
 
 
@@ -143,14 +141,9 @@ def render_multiple_range_ring_tool() -> None:
             if not multi_ranges:
                 st.warning("Please add at least one range.")
                 return
-            
-            # Create progress bar - updates come from the service
-            progress_bar = st.progress(0, text="0% - Initializing...")
-            
-            def update_progress(pct: float, msg: str):
-                """Callback to update progress bar from generate_multiple_range_rings."""
-                progress_bar.progress(min(pct, 1.0), text=f"{int(pct * 100)}% - {msg}")
-            
+
+            progress_bar, update_progress = build_progress_callback("Initializing...")
+
             try:
                 # Build range tuples and capture a single weapon_source (first non-empty from selected weapons)
                 ranges = []
@@ -162,7 +155,7 @@ def render_multiple_range_ring_tool() -> None:
                         info = next((w for w in available_weapons if w.get("name") == r.get("weapon_name")), None)
                         if info and info.get("source"):
                             weapon_source = info.get("source")
-                
+
                 if origin_type == "country" and country_code:
                     input_data = MultipleRangeRingInput(
                         origin_type=OriginType.COUNTRY,
@@ -172,15 +165,14 @@ def render_multiple_range_ring_tool() -> None:
                         resolution=resolution,
                     )
                     origin_geom = data_service.get_country_geometry(country_code)
-                    
-                    # Generate with progress callback - all updates come from the service
+
                     output = generate_multiple_range_rings(
                         input_data, origin_geom, country_name,
                         progress_callback=update_progress
                     )
                 else:
                     poi = PointOfInterest(name=poi_name, latitude=lat, longitude=lon)
-                    
+
                     input_data = MultipleRangeRingInput(
                         origin_type=OriginType.POINT,
                         origin_point=poi,
@@ -188,18 +180,17 @@ def render_multiple_range_ring_tool() -> None:
                         weapon_source=weapon_source,
                         resolution=resolution,
                     )
-                    
-                    # Generate with progress callback - all updates come from the service
+
                     output = generate_multiple_range_rings(
                         input_data,
                         progress_callback=update_progress
                     )
-                
+
                 # Clear previous outputs and add new one
                 clear_tool_outputs("multiple_range_ring")
                 add_tool_output("multiple_range_ring", output)
                 st.rerun()  # Rerun to render from session state
-                
+
             except Exception as e:
                 progress_bar.progress(1.0, text="Error!")
                 st.error(f"Error: {e}")
@@ -208,29 +199,17 @@ def render_multiple_range_ring_tool() -> None:
         tool_state = get_tool_state("multiple_range_ring")
         if tool_state.get("outputs"):
             output = tool_state["outputs"][-1]  # Get latest output
-            
-            st.success("Range rings generated!")
-            
-            # Display result
-            st.subheader(output.title)
-            if output.subtitle:
-                st.caption(output.subtitle)
-            
-            # Render map with legend overlay
-            deck = render_range_ring_output(output, get_map_style())
-            render_map_with_legend(deck, output)
-            
-            # Analyst mode metadata
-            if is_analyst_mode():
-                with st.expander("📊 Technical Metadata"):
-                    st.json({
-                        "output_id": str(output.output_id),
-                        "layer_count": len(output.layers),
-                        "processing_time_ms": output.metadata.processing_time_ms if output.metadata else None,
-                    })
-            
-            # Export controls
-            render_export_controls(output, "multiple_range_ring")
+
+            render_output_panel(
+                output,
+                tool_key="multiple_range_ring",
+                map_style=get_map_style(),
+                extra_metadata={
+                    "layer_count": len(output.layers),
+                    "processing_time_ms": getattr(output.metadata, "processing_time_ms", None),
+                    "weapon_source": getattr(output.metadata, "weapon_source", None),
+                },
+            )
 
 
 __all__ = ["render_multiple_range_ring_tool"]

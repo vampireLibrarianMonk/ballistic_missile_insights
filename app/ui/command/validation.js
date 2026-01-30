@@ -21,6 +21,8 @@ const ORRG_VALIDATION = {
     validFromPreps: ['from', 'within', 'inside', 'for', 'between'],
     validMinimumTypes: ['minimum range ring', 'minimum distance', 'min distance', 'min range'],
     validMultipleTypes: ['multiple range rings', 'multiple range ring', 'multiple rings'],
+    validCustomPoiTypes: ['custom poi', 'custom point', 'point of interest', 'poi'],
+    validCustomPoiUnits: ['km', 'mi'],
     validMultipleUnits: ['km', 'mi', 'nm'],
     validMinimumPreps: ['between', 'from'],
     validMinimumTargets: ['and', 'to'],
@@ -76,7 +78,8 @@ const ORRG_VALIDATION = {
         // Redirect messages
         reverseRedirect: 'This looks like a Reverse Range Ring command. See Reverse Range Ring tab.',
         singleRedirect: 'This looks like a Single Range Ring command. See Single Range Ring tab.',
-        minimumRedirect: 'This looks like a Minimum Range Ring command. See Minimum Range Ring tab.'
+        minimumRedirect: 'This looks like a Minimum Range Ring command. See Minimum Range Ring tab.',
+        customPoiRedirect: 'This looks like a Custom POI command. See Custom POI tab.'
     },
     
     // ============================================================
@@ -421,8 +424,124 @@ const ORRG_VALIDATION = {
         const hasMinimum = lower.includes('minimum') || lower.includes('min distance') || lower.includes('minimum distance');
         const hasMultiple = lower.includes('multiple');
         const hasSingle = (lower.includes('single') || lower.includes('range ring')) && !hasReverse && !hasMinimum && !hasMultiple;
+        const hasCustomPoi = lower.includes('poi') || lower.includes('point of interest') || lower.includes('custom poi');
         const hasVerb = /^(generate|create|build|show|calculate|compute)/i.test(lower);
-        return { hasReverse, hasSingle, hasMinimum, hasMultiple, hasVerb };
+        return { hasReverse, hasSingle, hasMinimum, hasMultiple, hasCustomPoi, hasVerb };
+    },
+
+    // ============================================================
+    // Validate Custom POI command (lightweight syntactic check)
+    // ============================================================
+    validateCustomPoi: function(lower) {
+        const self = this;
+        const typeMatch = self.validCustomPoiTypes.find(t => lower.includes(t));
+
+        // Strip leading label like "custom poi(s):" before splitting
+        const cleaned = lower.replace(/^\s*custom\s+poi[s]?:\s*/, '');
+        // Split groups by semicolon/newline/brackets
+        const groups = cleaned.split(/;|\n|\]\s*\[|\[|\]/).map(g => g.trim()).filter(Boolean);
+        const poiResults = [];
+        let anyError = false;
+        let anyFuzzy = false;
+        let poiCount = 0;
+
+        groups.forEach((g, idx) => {
+            // Try to capture name (optional) + lat lon + range(s) + unit
+            const regex = /([a-zA-Z\s']+)?\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)(?:\s+(\d+(?:\.\d+)?)(?:\s*-\s*(\d+(?:\.\d+)?))?)?\s*(km|mi)?/;
+            const m = g.match(regex);
+            if (!m) {
+                // Allow partial lat/lon pairs without ranges to stay fuzzy instead of error so we don't discard other POIs
+                const fallback = g.match(/([a-zA-Z\s']+)?\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/);
+                if (fallback) {
+                    const name = (fallback[1] || `POI ${idx + 1}`).trim();
+                    const lat = parseFloat(fallback[2]);
+                    const lon = parseFloat(fallback[3]);
+                    poiResults.push({
+                        status: 'error',
+                        message: `POI ${idx + 1}: range required (max or min-max)`,
+                        name,
+                        lat,
+                        lon,
+                        minRange: null,
+                        maxRange: null,
+                        unit: null,
+                    });
+                    anyError = true;
+                    return;
+                }
+                poiResults.push({ status: 'error', message: `POI ${idx + 1}: could not parse lat/lon/range`, raw: g });
+                anyError = true;
+                return;
+            }
+
+            const name = (m[1] || `POI ${idx + 1}`).trim();
+            const lat = parseFloat(m[2]);
+            const lon = parseFloat(m[3]);
+            const r1 = m[4] ? parseFloat(m[4]) : null;
+            const r2 = m[5] ? parseFloat(m[5]) : null;
+            const unit = m[6] ? m[6].toLowerCase() : null;
+
+            let minRange = 0;
+            let maxRange = null;
+            if (r1 !== null && r2 !== null) {
+                minRange = r1;
+                maxRange = r2;
+            } else if (r1 !== null) {
+                minRange = 0;
+                maxRange = r1;
+            }
+
+            let status = 'exact';
+            const msgs = [];
+
+            if (maxRange === null || isNaN(maxRange)) {
+                status = 'error';
+                msgs.push('range required (max or min-max)');
+            }
+            if (!(unit && self.validCustomPoiUnits.includes(unit))) {
+                status = 'error';
+                msgs.push('unit required (km or mi)');
+            }
+            if (maxRange === null || isNaN(maxRange) || maxRange <= 0) {
+                status = 'error';
+                msgs.push('max range must be > 0');
+            }
+            if (minRange < 0) {
+                status = 'error';
+                msgs.push('min range cannot be negative');
+            }
+            if (minRange > 0 && maxRange !== null && maxRange <= minRange) {
+                status = 'error';
+                msgs.push('max range must exceed min range');
+            }
+            if (lat < -90 || lat > 90) {
+                status = 'error';
+                msgs.push('lat must be between -90 and 90');
+            }
+            if (lon < -180 || lon > 180) {
+                status = 'error';
+                msgs.push('lon must be between -180 and 180');
+            }
+            if (maxRange !== null && maxRange > 20000 && status !== 'error') {
+                status = 'fuzzy';
+                msgs.push('max range very large; verify');
+            }
+
+            if (status === 'fuzzy') anyFuzzy = true;
+            if (status === 'error') anyError = true;
+
+            poiCount += 1;
+            poiResults.push({ status, name, lat, lon, minRange, maxRange, unit, messages: msgs });
+        });
+
+        const allExact = !anyError && !anyFuzzy && poiResults.length > 0 && !!typeMatch;
+        const allValid = !anyError && poiResults.length > 0 && !!typeMatch;
+        const hasFuzzy = anyFuzzy;
+        const partialValid = typeMatch || poiResults.length > 0;
+
+        const mode = poiCount > 1 ? 'Multiple' : 'Single';
+
+        return { allExact, allValid, hasFuzzy, partialValid, toolName: 'Custom POI', poiResults, typeMatch, mode, poiCount };
     },
     
     // ============================================================

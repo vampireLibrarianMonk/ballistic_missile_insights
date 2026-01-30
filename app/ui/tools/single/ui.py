@@ -18,9 +18,7 @@ from app.models.inputs import (
     PointOfInterest,
     SingleRangeRingInput,
 )
-from app.rendering.pydeck_adapter import render_range_ring_output
 from app.ui.layout.global_state import (
-    is_analyst_mode,
     get_map_style,
     add_tool_output,
     get_tool_state,
@@ -30,8 +28,8 @@ from app.ui.tools.single.state import reset_single_range_ring_state
 from app.ui.tools.shared import (
     get_weapon_selection_and_range,
     render_range_input_with_weapon_key,
-    render_map_with_legend,
-    render_export_controls,
+    render_output_panel,
+    build_progress_callback,
 )
 
 
@@ -119,11 +117,7 @@ def render_single_range_ring_tool() -> None:
             )
 
         if st.button("🚀 Generate Range Ring", key="single_generate"):
-            progress_bar = st.progress(0, text="Initializing...")
-
-            def update_progress(pct: float, status: str):
-                progress_bar.progress(min(pct, 1.0), text=f"{int(pct * 100)}% - {status}")
-
+            progress_bar, update_progress = build_progress_callback("Initializing...")
             try:
                 if origin_type == "country" and country_code:
                     weapon_source = None
@@ -161,6 +155,7 @@ def render_single_range_ring_tool() -> None:
                 progress_bar.progress(1.0, text="100% - Complete!")
 
                 reset_single_range_ring_state()
+                clear_tool_outputs("single_range_ring")
                 add_tool_output("single_range_ring", output)
                 st.rerun()
 
@@ -171,29 +166,18 @@ def render_single_range_ring_tool() -> None:
         tool_state = get_tool_state("single_range_ring")
         if tool_state.get("outputs"):
             output = tool_state["outputs"][-1]
-
-            st.success("Range ring generated!")
-
-            st.subheader(output.title)
-            if output.subtitle:
-                st.caption(output.subtitle)
-
-            deck = render_range_ring_output(output, get_map_style())
-            render_map_with_legend(deck, output)
-
-            if is_analyst_mode():
-                with st.expander("📊 Technical Metadata"):
-                    st.json(
-                        {
-                            "output_id": str(output.output_id),
-                            "vertex_count": output.metadata.vertex_count,
-                            "processing_time_ms": output.metadata.processing_time_ms,
-                            "range_km": output.metadata.range_km,
-                            "range_classification": output.metadata.range_classification,
-                        }
-                    )
-
-            render_export_controls(output, "single_range_ring")
+            render_output_panel(
+                output,
+                tool_key="single_range_ring",
+                map_style=get_map_style(),
+                extra_metadata={
+                    "vertex_count": getattr(output.metadata, "vertex_count", None),
+                    "processing_time_ms": getattr(output.metadata, "processing_time_ms", None),
+                    "range_km": getattr(output.metadata, "range_km", None),
+                    "range_classification": getattr(output.metadata, "range_classification", None),
+                    "weapon_source": getattr(output.metadata, "weapon_source", None),
+                },
+            )
 
 
 __all__ = ["render_single_range_ring_tool"]

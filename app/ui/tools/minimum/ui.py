@@ -13,9 +13,7 @@ from shapely.geometry import Point
 from app.data.loaders import get_data_service
 from app.geometry.services import calculate_minimum_distance
 from app.models.inputs import MinimumRangeRingInput
-from app.rendering.pydeck_adapter import render_range_ring_output
 from app.ui.layout.global_state import (
-    is_analyst_mode,
     get_map_style,
     add_tool_output,
     get_tool_state,
@@ -26,8 +24,8 @@ from app.ui.tools.minimum.state import (
     set_min_distance_result,
 )
 from app.ui.tools.shared import (
-    render_map_with_legend,
-    render_export_controls,
+    render_output_panel,
+    build_progress_callback,
 )
 
 
@@ -147,13 +145,8 @@ def render_minimum_range_ring_tool() -> None:
         
         if st.button("🚀 Calculate Minimum Distance", key="min_generate"):
             if geom_a is not None and geom_b is not None:
-                # Create progress bar - updates come from the service
-                progress_bar = st.progress(0, text="0% - Initializing...")
-                
-                def update_progress(pct: float, status: str):
-                    """Callback to update progress bar from calculate_minimum_distance."""
-                    progress_bar.progress(min(pct, 1.0), text=f"{int(pct * 100)}% - {status}")
-                
+                progress_bar, update_progress = build_progress_callback("Initializing...")
+
                 try:
                     input_data = MinimumRangeRingInput(
                         country_code_a=country_code_a,
@@ -161,23 +154,23 @@ def render_minimum_range_ring_tool() -> None:
                         show_minimum_line=show_line,
                         show_buffer_rings=False,
                     )
-                    
+
                     output, result = calculate_minimum_distance(
                         input_data, geom_a, geom_b, location_a_name, location_b_name,
                         progress_callback=update_progress
                     )
-                    
+
                     # Store result in session state for persistence
                     set_min_distance_result(result)
-                    
+
                     # Clear previous outputs and add new one
                     clear_tool_outputs("minimum_range_ring")
                     add_tool_output("minimum_range_ring", output)
-                    
+
                     # Complete progress and rerun to render from session state
                     progress_bar.progress(1.0, text="100% - Complete!")
                     st.rerun()
-                    
+
                 except Exception as e:
                     progress_bar.progress(1.0, text="Error!")
                     st.error(f"Error calculating minimum distance: {e}")
@@ -188,29 +181,22 @@ def render_minimum_range_ring_tool() -> None:
         tool_state = get_tool_state("minimum_range_ring")
         if tool_state.get("outputs"):
             output = tool_state["outputs"][-1]  # Get latest output
-            
+
             # Get result from session state
             result = get_min_distance_result()
             if result:
                 st.success(f"Minimum distance: **{result.distance_km:,.1f} km**")
-            
-            st.subheader(output.title)
-            st.caption(output.subtitle)
-            st.markdown(f"*{output.description}*")
-            
-            deck = render_range_ring_output(output, get_map_style())
-            render_map_with_legend(deck, output)
-            
-            # Analyst mode metadata
-            if is_analyst_mode():
-                with st.expander("📊 Technical Metadata"):
-                    st.json({
-                        "output_id": str(output.output_id),
-                        "processing_time_ms": output.metadata.processing_time_ms if output.metadata else None,
-                        "range_km": output.metadata.range_km if output.metadata else None,
-                    })
-            
-            render_export_controls(output, "minimum_range_ring")
+
+            render_output_panel(
+                output,
+                tool_key="minimum_range_ring",
+                map_style=get_map_style(),
+                extra_metadata={
+                    "processing_time_ms": getattr(output.metadata, "processing_time_ms", None),
+                    "range_km": getattr(output.metadata, "range_km", None),
+                    "weapon_source": getattr(output.metadata, "weapon_source", None),
+                },
+            )
 
 
 __all__ = ["render_minimum_range_ring_tool"]

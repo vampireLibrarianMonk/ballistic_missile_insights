@@ -1,39 +1,41 @@
 <style>
     .cmd-status-bar {
         font-family: "Source Sans Pro", sans-serif;
-        padding: 8px 12px;
-        border-radius: 4px;
+        padding: 10px 12px;
+        border-radius: 6px;
         margin: 8px 0;
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 10px;
         font-size: 13px;
         transition: all 0.2s ease;
+        border: 1px solid transparent;
     }
     .cmd-status-empty {
         background: #fff3cd;
-        border: 1px solid #ffc107;
+        border-color: #ffc107;
         color: #856404;
     }
     .cmd-status-partial {
         background: #cce5ff;
-        border: 1px solid #007bff;
+        border-color: #007bff;
         color: #004085;
     }
     .cmd-status-valid {
         background: #d4edda;
-        border: 1px solid #28a745;
+        border-color: #28a745;
         color: #155724;
     }
     .cmd-status-icon {
         font-size: 16px;
+        min-width: 18px;
     }
     .cmd-status-text {
         flex: 1;
     }
     .cmd-status-hint {
         font-size: 11px;
-        opacity: 0.8;
+        opacity: 0.85;
     }
 </style>
 <div class="cmd-status-bar cmd-status-empty" id="cmd-status-bar">
@@ -136,6 +138,30 @@
                     statusIcon.textContent = '';
                     statusText.textContent = `⚠️ ${M.minimumFormat} ${M.seeHelp(result.toolName)}`;
                     statusHint.textContent = '';
+                }
+            } else if (cmdType.hasCustomPoi) {
+                const result = V.validateCustomPoi(lower);
+
+                if (result.allExact) {
+                    statusBar.className = 'cmd-status-bar cmd-status-valid';
+                    statusIcon.textContent = '';
+                    statusText.textContent = M.validatorValid;
+                    statusHint.textContent = '';
+                } else if (result.allValid && result.hasFuzzy) {
+                    statusBar.className = 'cmd-status-bar cmd-status-partial';
+                    statusIcon.textContent = '⚠️';
+                    statusText.textContent = M.validatorFuzzy;
+                    statusHint.textContent = '';
+                } else if (result.partialValid) {
+                    statusBar.className = 'cmd-status-bar cmd-status-empty';
+                    statusIcon.textContent = '';
+                    statusText.textContent = '⚠️ Provide lat lon and range (min-max or max) with unit km/mi; separate POIs by semicolons/brackets.';
+                    statusHint.textContent = M.customPoiRedirect;
+                } else {
+                    statusBar.className = 'cmd-status-bar cmd-status-partial';
+                    statusIcon.textContent = '❓';
+                    statusText.textContent = 'Enter custom POI: e.g., "Custom POIs: [Name lat lon 300-1200 km]; [Name lat lon 800 mi]"';
+                    statusHint.textContent = M.customPoiRedirect;
                 }
             } else if (cmdType.hasVerb) {
                 statusBar.className = 'cmd-status-bar cmd-status-partial';
