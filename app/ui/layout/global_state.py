@@ -24,6 +24,7 @@ COMMAND_OUTPUT_KEY = "command_output"
 COMMAND_REVERSE_PENDING_KEY = "command_reverse_pending"
 COMMAND_SINGLE_PENDING_KEY = "command_single_pending"
 COMMAND_MINIMUM_PENDING_KEY = "command_minimum_pending"
+COMMAND_MULTIPLE_PENDING_KEY = "command_multiple_pending"
 
 def init_session_state() -> None:
     """
@@ -70,6 +71,8 @@ def init_session_state() -> None:
         st.session_state[COMMAND_REVERSE_PENDING_KEY] = None
     if COMMAND_MINIMUM_PENDING_KEY not in st.session_state:
         st.session_state[COMMAND_MINIMUM_PENDING_KEY] = None
+    if COMMAND_MULTIPLE_PENDING_KEY not in st.session_state:
+        st.session_state[COMMAND_MULTIPLE_PENDING_KEY] = None
     
     # Tool-specific state initialization
     _init_tool_states()
@@ -260,6 +263,16 @@ def get_command_minimum_pending() -> Optional[dict]:
 def set_command_minimum_pending(data: Optional[dict]) -> None:
     """Set or clear the pending minimum range ring selection data."""
     st.session_state[COMMAND_MINIMUM_PENDING_KEY] = data
+
+
+def get_command_multiple_pending() -> Optional[dict]:
+    """Get the pending multiple range ring selection data."""
+    return st.session_state.get(COMMAND_MULTIPLE_PENDING_KEY)
+
+
+def set_command_multiple_pending(data: Optional[dict]) -> None:
+    """Set or clear the pending multiple range ring selection data."""
+    st.session_state[COMMAND_MULTIPLE_PENDING_KEY] = data
 
 
 # Tool State Functions

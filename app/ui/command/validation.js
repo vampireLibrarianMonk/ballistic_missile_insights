@@ -20,6 +20,8 @@ const ORRG_VALIDATION = {
     validSingleTypes: ['single range ring', 'single ring', 'range ring'],
     validFromPreps: ['from', 'within', 'inside', 'for', 'between'],
     validMinimumTypes: ['minimum range ring', 'minimum distance', 'min distance', 'min range'],
+    validMultipleTypes: ['multiple range rings', 'multiple range ring', 'multiple rings'],
+    validMultipleUnits: ['km', 'mi', 'nm'],
     validMinimumPreps: ['between', 'from'],
     validMinimumTargets: ['and', 'to'],
     validTargetPreps: ['against', 'to', 'toward', 'towards'],
@@ -59,6 +61,7 @@ const ORRG_VALIDATION = {
         reverseFormat: 'Format: Generate a reverse range ring from [Country] against [City]',
         singleFormat: 'Format: Generate a single range ring from [Country]',
         minimumFormat: 'Format: Calculate minimum distance between [Location A] and [Location B]',
+        multipleFormat: 'Format: Generate multiple range rings from [Country] at [distances] [unit]. The respective missile names are [names].',
         
         // Unrecognized/query states
         unrecognized: 'Command pattern not recognized',
@@ -207,10 +210,14 @@ const ORRG_VALIDATION = {
         const self = this;
         let verbMatch = self.validVerbs.find(v => lower.startsWith(v));
         let typeMatch = self.validSingleTypes.find(t => lower.includes(t));
-        let fromMatch = ['from', 'for'].find(p => {
-            const typeEnd = typeMatch ? lower.indexOf(typeMatch) + typeMatch.length : 0;
-            return lower.indexOf(' ' + p + ' ', typeEnd) >= 0;
-        });
+        let fromMatch = null;
+        const typeEnd = typeMatch ? lower.indexOf(typeMatch) + typeMatch.length : 0;
+        const afterType = lower.substring(typeEnd);
+        const fromRegex = /\b(from|for)\b\s*(.*)/;
+        const fromRegexMatch = afterType.match(fromRegex);
+        if (fromRegexMatch) {
+            fromMatch = fromRegexMatch[1];
+        }
         
         let country = null;
         if (fromMatch && typeMatch) {
@@ -303,6 +310,108 @@ const ORRG_VALIDATION = {
             locationA, locationB, locationAStatus, locationBStatus, locationAMatch, locationBMatch
         };
     },
+
+    // ============================================================
+    // Validate Multiple Range Ring command
+    // ============================================================
+    validateMultiple: function(lower) {
+        const self = this;
+        const verbMatch = self.validVerbs.find(v => lower.startsWith(v));
+        const typeMatch = self.validMultipleTypes.find(t => lower.includes(t));
+        let fromMatch = null;
+        let country = null;
+        let distances = [];
+        let distancesText = null;
+        let unit = null;
+        let atMatch = null;
+        let missileNames = [];
+        let missileNamesText = null;
+
+        if (typeMatch) {
+            const typeEnd = lower.indexOf(typeMatch) + typeMatch.length;
+            const afterType = lower.substring(typeEnd);
+            const fromRegexMatch = afterType.match(/\b(from|for)\b\s*(.*)/);
+            if (fromRegexMatch) {
+                fromMatch = fromRegexMatch[1];
+                const afterFrom = (fromRegexMatch[2] || '').trim();
+                if (afterFrom) {
+                    const atIdx = afterFrom.indexOf(' at ');
+                    if (atIdx >= 0) {
+                        atMatch = 'at';
+                        country = afterFrom.substring(0, atIdx).trim();
+                        const afterAt = afterFrom.substring(atIdx + 4);
+                        const distanceSentence = afterAt.split('.')[0].trim();
+                        const unitMatch = distanceSentence.match(/(.+?)\s+(km|mi|nm)\b/);
+                        if (unitMatch) {
+                            distancesText = unitMatch[1].trim();
+                            unit = unitMatch[2];
+                            distances = distancesText.match(/[\d.]+/g) || [];
+                        }
+                    } else if (afterFrom.endsWith(' at')) {
+                        atMatch = 'at';
+                        country = afterFrom.substring(0, afterFrom.length - 3).trim();
+                    } else {
+                        country = afterFrom.trim();
+                    }
+                }
+            }
+        }
+
+        const namesMatch = lower.match(/missile names are (.+)$/);
+        if (namesMatch) {
+            missileNamesText = namesMatch[1].replace(/\.$/, '').trim();
+            missileNames = missileNamesText
+                .replace(/\band\b/gi, ',')
+                .split(',')
+                .map(name => name.trim())
+                .filter(Boolean);
+        }
+
+        let countryStatus = false;
+        let countryMatch = null;
+        if (country) {
+            const countryLower = country.toLowerCase();
+            if (self.validCountries.includes(countryLower)) {
+                countryStatus = 'exact';
+                countryMatch = countryLower;
+            } else {
+                countryMatch = self.fuzzyMatch(country, self.validCountries);
+                if (countryMatch) {
+                    countryStatus = 'fuzzy';
+                }
+            }
+        }
+
+        const distancesStatus = distances.length ? 'exact' : false;
+        const unitStatus = unit ? (self.validMultipleUnits.includes(unit) ? 'exact' : 'fuzzy') : false;
+
+        let missileStatus = false;
+        if (missileNamesText) {
+            if (missileNames.length) {
+                if (distances.length && missileNames.length !== distances.length) {
+                    missileStatus = 'fuzzy';
+                } else {
+                    missileStatus = 'exact';
+                }
+            }
+        }
+
+        const allExact = verbMatch && typeMatch && fromMatch && (countryStatus === 'exact')
+            && atMatch && distances.length && unit && (missileStatus === 'exact');
+        const allValid = verbMatch && typeMatch && fromMatch && countryMatch
+            && atMatch && distances.length && unit && missileStatus;
+        const hasFuzzy = countryStatus === 'fuzzy' || missileStatus === 'fuzzy';
+        const partialValid = typeMatch || countryMatch || distances.length;
+
+        return {
+            allExact, allValid, hasFuzzy, partialValid, toolName: 'Multiple Range Ring',
+            verbMatch, typeMatch, fromMatch, atMatch,
+            country, countryStatus, countryMatch,
+            distances, distancesText, unit, unitStatus,
+            missileNames, missileNamesText, missileStatus,
+            distancesStatus
+        };
+    },
     
     // ============================================================
     // Detect command type from input
@@ -310,9 +419,10 @@ const ORRG_VALIDATION = {
     detectCommandType: function(lower) {
         const hasReverse = lower.includes('reverse') || lower.includes('launch envelope');
         const hasMinimum = lower.includes('minimum') || lower.includes('min distance') || lower.includes('minimum distance');
-        const hasSingle = (lower.includes('single') || lower.includes('range ring')) && !hasReverse && !hasMinimum;
+        const hasMultiple = lower.includes('multiple');
+        const hasSingle = (lower.includes('single') || lower.includes('range ring')) && !hasReverse && !hasMinimum && !hasMultiple;
         const hasVerb = /^(generate|create|build|show|calculate|compute)/i.test(lower);
-        return { hasReverse, hasSingle, hasMinimum, hasVerb };
+        return { hasReverse, hasSingle, hasMinimum, hasMultiple, hasVerb };
     },
     
     // ============================================================

@@ -22,6 +22,7 @@ from app.models.inputs import (
     ReverseRangeRingInput,
     SingleRangeRingInput,
     MinimumRangeRingInput,
+    MultipleRangeRingInput,
     DistanceUnit,
     OriginType,
 )
@@ -29,6 +30,7 @@ from app.geometry.services import (
     generate_reverse_range_ring,
     generate_single_range_ring,
     calculate_minimum_distance,
+    generate_multiple_range_rings,
 )
 from app.geometry.utils import geodesic_distance
 from app.data.loaders import get_data_service
@@ -47,6 +49,8 @@ from app.ui.layout.global_state import (
     set_command_single_pending,
     get_command_minimum_pending,
     set_command_minimum_pending,
+    get_command_multiple_pending,
+    set_command_multiple_pending,
 )
 from app.ui.tools.tool_components import render_map_with_legend
 import streamlit.components.v1 as components
@@ -94,31 +98,6 @@ def _extract_reverse_range_request(text: str) -> Optional[tuple[str, str]]:
     if not country_raw or not city_raw:
         return None
     return country_raw.strip(), city_raw.strip()
-
-
-def _generate_reverse_range_output(country_name: str, city_name: str) -> RangeRingOutput:
-    data_service = get_data_service()
-
-    countries = data_service.get_country_list()
-    cities = data_service.get_city_list()
-
-    matched_country = _fuzzy_match(country_name, countries, cutoff=0.6)
-    matched_city = _fuzzy_match(city_name, cities, cutoff=0.6)
-
-    if not matched_country:
-        raise CommandParsingError(f"Unable to match shooter country '{country_name}'.")
-    if not matched_city:
-        raise CommandParsingError(f"Unable to match target city '{city_name}'.")
-
-    country_code = data_service.get_country_code(matched_country)
-    if not country_code:
-        raise CommandParsingError(f"Could not resolve ISO code for '{matched_country}'.")
-
-    target_coords = data_service.get_city_coordinates(matched_city)
-    if not target_coords:
-        raise CommandParsingError(f"Could not resolve coordinates for '{matched_city}'.")
-
-    return _generate_reverse_range_output_with_weapon(matched_country, matched_city, country_code, target_coords)
 
 
 def _generate_reverse_range_output_with_weapon(
@@ -212,6 +191,49 @@ def _extract_minimum_range_request(text: str) -> Optional[tuple[str, str]]:
     if not location_a or not location_b:
         return None
     return location_a.strip(), location_b.strip()
+
+
+def _extract_multiple_range_request(text: str) -> Optional[dict]:
+    """Extract country, distances, unit, and missile names from a multiple range ring command."""
+    normalized = _normalize_text(text)
+    if "multiple" not in normalized:
+        return None
+
+    synonyms = r"multiple range rings|multiple range ring|multiple rings"
+    prepositions = r"from|for"
+    pattern = (
+        rf"(?:generate|create|build|show)?\s*(?:{synonyms})\s+"
+        rf"(?:{prepositions})\s+(?P<country>.+?)\s+"
+        rf"at\s+(?P<distances>.+?)\s+(?P<unit>km|mi|nm)\b"
+    )
+    match = re.search(pattern, text, flags=re.IGNORECASE)
+    if not match:
+        return None
+
+    country_raw = match.group("country").strip().rstrip(".")
+    distances_raw = match.group("distances").strip()
+    unit_raw = match.group("unit").lower()
+    distances = [float(val) for val in re.findall(r"[\d.]+", distances_raw)]
+    if not distances or not country_raw:
+        return None
+
+    missile_names = []
+    names_match = re.search(r"missile names are (.+)$", text, flags=re.IGNORECASE)
+    if names_match:
+        names_text = names_match.group(1).strip().rstrip(".")
+        missile_names = [
+            name.strip()
+            for name in re.sub(r"\band\b", ",", names_text, flags=re.IGNORECASE)
+            .split(",")
+            if name.strip()
+        ]
+
+    return {
+        "country": country_raw,
+        "distances": distances,
+        "unit": unit_raw,
+        "missile_names": missile_names,
+    }
 
 
 def _extract_minimum_location_type(text: str) -> Optional[str]:
@@ -357,6 +379,9 @@ def _extract_single_range_request(text: str) -> Optional[str]:
     reverse_indicators = ["reverse", "launch envelope"]
     if any(indicator in normalized for indicator in reverse_indicators):
         return None
+
+    if "multiple" in normalized or "missile names" in normalized:
+        return None
     
     synonyms = r"single range ring|single ring|range ring"
     prepositions = r"from|for"
@@ -465,11 +490,30 @@ def _update_single_pending_history_entry(
     )
 
 
-def _clear_export_cache() -> None:
-    """Clear any cached export data from session state."""
-    keys_to_remove = [k for k in st.session_state.keys() if k.startswith("command_exports_")]
-    for key in keys_to_remove:
-        del st.session_state[key]
+def _update_multiple_pending_history_entry(
+    country_name: str,
+    ring_count: int,
+    final_status: str,
+    output: Optional[RangeRingOutput] = None,
+) -> None:
+    """Update the pending multiple range ring history entry with completion details."""
+    updates = {
+        "status": final_status,
+        "text": f"Multiple range rings: {country_name} ({ring_count} rings)",
+        "origin_country": country_name,
+        "ring_count": ring_count,
+    }
+    
+    if output is not None:
+        updates["output"] = output
+    
+    update_command_history_entry(
+        match_criteria={
+            "resolution": "Multiple Range Ring",
+            "status": "Pending",
+        },
+        updates=updates
+    )
 
 
 def _clear_product_viewer() -> None:
@@ -541,28 +585,6 @@ def _render_cached_export_links(output, tool_key: str) -> None:
     components.html(export_html, height=100)
 
 
-def _render_rrr_validator() -> None:
-    """Render the Reverse Range Ring real-time validator widget."""
-    import json
-
-    data_service = get_data_service()
-
-    countries = data_service.get_country_list()
-    cities = data_service.get_city_list()
-
-    html = _render_html_template(
-        "rrr_validator.html",
-        replacements={
-            "{{COUNTRIES_JSON}}": json.dumps([c.lower() for c in countries]),
-            "{{CITIES_JSON}}": json.dumps([c.lower() for c in cities]),
-            "{{COUNTRIES_DISPLAY_JSON}}": json.dumps(sorted(countries)),
-            "{{CITIES_DISPLAY_JSON}}": json.dumps(sorted(cities)),
-        },
-    )
-
-    components.html(html, height=420)
-
-
 def _render_js_export_controls(output, tool_key: str) -> None:
     """Render JavaScript-based export controls that don't cause page refresh."""
     from app.ui.layout.global_state import is_analyst_mode
@@ -599,15 +621,15 @@ def _render_js_export_controls(output, tool_key: str) -> None:
         # GeoJSON and KMZ are fast (no map rendering)
         geojson_data = export_to_geojson_string(output, include_metadata=include_metadata)
         kmz_data = export_to_kmz_bytes(output, include_metadata=include_metadata)
-        
+
         # PNG and PDF share the same SVG rendering - import optimized function
         from app.exports.png import render_svg_with_template
         import cairosvg
-        
-        # Render SVG once and reuse for both PNG and PDF
+
+        # Render SVG once and reuse for both PNG and PDF, ensuring weapon_source flows through metadata
         svg_content = render_svg_with_template(output, classification="UNCLASSIFIED")
         svg_bytes = svg_content.encode("utf-8")
-        
+
         # Generate PNG from cached SVG
         png_data = cairosvg.svg2png(
             bytestring=svg_bytes,
@@ -616,10 +638,10 @@ def _render_js_export_controls(output, tool_key: str) -> None:
             dpi=100,
             background_color="white",
         )
-        
+
         # Generate PDF from cached SVG
         pdf_data = cairosvg.svg2pdf(bytestring=svg_bytes)
-        
+
         # Base64 encode
         geojson_b64 = base64.b64encode(geojson_data.encode('utf-8')).decode('utf-8')
         kmz_b64 = base64.b64encode(kmz_data).decode('utf-8')
@@ -659,6 +681,8 @@ def _render_input_panel() -> Optional[str]:
     reverse_pending = get_command_reverse_pending()
     single_pending = get_command_single_pending()
     minimum_pending = get_command_minimum_pending()
+    multiple_pending = get_command_multiple_pending()
+    multiple_pending_query = st.session_state.pop("command_multiple_pending_query", None)
     
     # Check if we're currently processing a task (to disable confirm button)
     is_processing = st.session_state.get("command_processing", False)
@@ -666,7 +690,141 @@ def _render_input_panel() -> Optional[str]:
     if pending_query:
         return pending_query
 
+    if multiple_pending_query:
+        return multiple_pending_query
+
     st.caption("Ask a question • Issue a task • Generate analysis • Get answers")
+
+    # If there's a pending multiple range ring selection, show Step 2 UI
+    if multiple_pending:
+        st.markdown("### 📊 Step 2: Confirm Multiple Range Rings")
+        st.info(
+            f"**Multiple Range Ring in progress**\n\n"
+            f"Origin Country: **{multiple_pending.get('country_name')}**"
+        )
+
+        # Initialize ranges in session state if not already
+        if "command_multi_ranges" not in st.session_state:
+            # Prepopulate from parsed data
+            parsed_ranges = multiple_pending.get("ranges", [])
+            st.session_state.command_multi_ranges = [
+                {
+                    "value": r[0],
+                    "unit": r[1].value if hasattr(r[1], 'value') else r[1],
+                    "label": r[2] if len(r) > 2 and r[2] else "",
+                }
+                for r in parsed_ranges
+            ]
+
+        # Display editable ranges
+        st.markdown("**Range Rings:**")
+        ranges_to_remove = []
+        for i, range_item in enumerate(st.session_state.command_multi_ranges):
+            col1, col2, col3, col4 = st.columns([3, 2, 1, 1])
+
+            with col1:
+                range_item["label"] = st.text_input(
+                    f"Missile Name {i+1}",
+                    value=range_item.get("label", ""),
+                    key=f"cmd_multi_label_{i}",
+                    disabled=is_processing,
+                )
+
+            with col2:
+                range_item["value"] = st.number_input(
+                    f"Range {i+1}",
+                    value=float(range_item.get("value", 1000)),
+                    min_value=1.0,
+                    step=100.0,
+                    key=f"cmd_multi_range_{i}",
+                    disabled=is_processing,
+                )
+
+            with col3:
+                unit_options = ["km", "mi", "nm"]
+                current_unit = range_item.get("unit", "km")
+                unit_index = unit_options.index(current_unit) if current_unit in unit_options else 0
+                range_item["unit"] = st.selectbox(
+                    f"Unit {i+1}",
+                    options=unit_options,
+                    index=unit_index,
+                    key=f"cmd_multi_unit_{i}",
+                    disabled=is_processing,
+                )
+
+            with col4:
+                st.write("")  # Spacing
+                if not is_processing and st.button("❌", key=f"cmd_multi_remove_{i}"):
+                    ranges_to_remove.append(i)
+
+        # Remove ranges marked for deletion
+        for i in sorted(ranges_to_remove, reverse=True):
+            st.session_state.command_multi_ranges.pop(i)
+            st.rerun()
+
+        # Add range button
+        if not is_processing:
+            if st.button("➕ Add Range", key="cmd_multi_add_range"):
+                st.session_state.command_multi_ranges.append(
+                    {"value": 1000, "unit": "km", "label": ""}
+                )
+                st.rerun()
+
+        # Confirm / Generate button with JavaScript-based disable protection
+        confirm_btn = st.button(
+            "🚀 Generate Multiple Rings",
+            key="confirm_multiple_generate",
+            use_container_width=True,
+            disabled=is_processing,
+        )
+
+        # Inject JavaScript to prevent double-clicks on the generate button
+        components.html("""
+        <script>
+        (function() {
+            function disableButton() {
+                const buttons = window.parent.document.querySelectorAll('button');
+                for (const btn of buttons) {
+                    if (btn.innerText && btn.innerText.includes('Generate Multiple Rings')) {
+                        if (!btn.dataset.clickHandlerAttached) {
+                            btn.dataset.clickHandlerAttached = 'true';
+                            btn.addEventListener('click', function(e) {
+                                // Immediately disable after click
+                                this.disabled = true;
+                                this.style.opacity = '0.5';
+                                this.style.pointerEvents = 'none';
+                                this.innerText = '⏳ Processing...';
+                            });
+                        }
+                        break;
+                    }
+                }
+            }
+            // Try to attach immediately and after a short delay
+            disableButton();
+            setTimeout(disableButton, 100);
+            setTimeout(disableButton, 300);
+        })();
+        </script>
+        """, height=0)
+
+        # Reset Execution Query button
+        if get_command_output() is not None and not is_processing:
+            st.divider()
+            if st.button(
+                "🔄 Reset Execution Query",
+                key="reset_execution_query_multiple",
+                use_container_width=True,
+            ):
+                _clear_product_viewer()
+                st.rerun()
+
+        if confirm_btn and st.session_state.command_multi_ranges and not is_processing:
+            st.session_state["command_processing"] = True
+            st.session_state["command_pending_query"] = "confirm multiple generate"
+            st.rerun()
+
+        return None
 
     # If there's a pending reverse range ring selection, show Step 2 UI
     if reverse_pending:
@@ -690,14 +848,41 @@ def _render_input_panel() -> Optional[str]:
             disabled=is_processing,
         )
 
-        # Hide the confirm button while processing to match Execute Command behavior
-        confirm_btn = False
-        if not is_processing:
-            confirm_btn = st.button(
-                "✅ Confirm Selection",
-                key="confirm_weapon",
-                use_container_width=True,
-            )
+        # Confirm button with JavaScript-based disable protection
+        confirm_btn = st.button(
+            "✅ Confirm Selection",
+            key="confirm_weapon",
+            use_container_width=True,
+            disabled=is_processing,
+        )
+
+        # Inject JavaScript to prevent double-clicks on the confirm button
+        components.html("""
+        <script>
+        (function() {
+            function disableButton() {
+                const buttons = window.parent.document.querySelectorAll('button');
+                for (const btn of buttons) {
+                    if (btn.innerText && btn.innerText.includes('Confirm Selection')) {
+                        if (!btn.dataset.reverseClickHandler) {
+                            btn.dataset.reverseClickHandler = 'true';
+                            btn.addEventListener('click', function(e) {
+                                this.disabled = true;
+                                this.style.opacity = '0.5';
+                                this.style.pointerEvents = 'none';
+                                this.innerText = '⏳ Processing...';
+                            });
+                        }
+                        break;
+                    }
+                }
+            }
+            disableButton();
+            setTimeout(disableButton, 100);
+            setTimeout(disableButton, 300);
+        })();
+        </script>
+        """, height=0)
 
         # Reset Execution Query button - only show when there's output to clear
         if get_command_output() is not None and not is_processing:
@@ -738,14 +923,41 @@ def _render_input_panel() -> Optional[str]:
             disabled=is_processing,
         )
 
-        # Hide the confirm button while processing to match Execute Command behavior
-        confirm_btn = False
-        if not is_processing:
-            confirm_btn = st.button(
-                "✅ Confirm Selection",
-                key="confirm_single_weapon",
-                use_container_width=True,
-            )
+        # Confirm button with JavaScript-based disable protection
+        confirm_btn = st.button(
+            "✅ Confirm Selection",
+            key="confirm_single_weapon",
+            use_container_width=True,
+            disabled=is_processing,
+        )
+
+        # Inject JavaScript to prevent double-clicks on the confirm button
+        components.html("""
+        <script>
+        (function() {
+            function disableButton() {
+                const buttons = window.parent.document.querySelectorAll('button');
+                for (const btn of buttons) {
+                    if (btn.innerText && btn.innerText.includes('Confirm Selection') && btn.closest('[data-testid]')) {
+                        if (!btn.dataset.singleClickHandler) {
+                            btn.dataset.singleClickHandler = 'true';
+                            btn.addEventListener('click', function(e) {
+                                this.disabled = true;
+                                this.style.opacity = '0.5';
+                                this.style.pointerEvents = 'none';
+                                this.innerText = '⏳ Processing...';
+                            });
+                        }
+                        break;
+                    }
+                }
+            }
+            disableButton();
+            setTimeout(disableButton, 100);
+            setTimeout(disableButton, 300);
+        })();
+        </script>
+        """, height=0)
 
         # Reset Execution Query button
         if get_command_output() is not None and not is_processing:
@@ -765,77 +977,53 @@ def _render_input_panel() -> Optional[str]:
 
     # If there's a pending minimum range ring selection, show Step 2 UI
     if minimum_pending:
-        selection_labels = minimum_pending.get("selection_labels")
-        inferred_type = minimum_pending.get("location_type", "unknown")
+        location_type = minimum_pending.get("location_type", "countries")
+        location_a = minimum_pending.get("location_a")
+        location_b = minimum_pending.get("location_b")
 
-        if not selection_labels:
-            st.markdown("### 📏 Step 2: Select Location Type")
-            st.info("**Minimum Range Ring in progress**\n\nSelect a location type to continue.")
-            type_options = ["Countries", "Cities"]
-            default_index = 0 if inferred_type == "countries" else 1
-            selected_type = st.selectbox(
-                "Choose location type:",
-                options=type_options,
-                index=default_index,
-                key="minimum_type_select",
-                disabled=is_processing,
-            )
-
-            confirm_btn = False
-            if not is_processing:
-                confirm_btn = st.button(
-                    "✅ Confirm Selection",
-                    key="confirm_minimum_type",
-                    use_container_width=True,
-                )
-
-            if get_command_output() is not None and not is_processing:
-                st.divider()
-                if st.button(
-                    "🔄 Reset Execution Query",
-                    key="reset_execution_query_minimum_type",
-                    use_container_width=True,
-                ):
-                    _clear_product_viewer()
-                    st.rerun()
-
-            if confirm_btn and selected_type and not is_processing:
-                st.session_state["command_processing"] = True
-                st.session_state["command_pending_query"] = (
-                    f"Select minimum type {selected_type.lower()}"
-                )
-                st.rerun()
-
-            return None
-
-        st.markdown("### 📏 Step 2: Select Minimum Range Locations")
+        st.markdown("### 📏 Step 2: Confirm Minimum Range Ring")
         st.info(
-            "**Minimum Range Ring in progress**\n\n"
-            f"Mode: **{inferred_type.title()}**"
+            f"**Minimum Range Ring in progress**\n\n"
+            f"Location Type: **{location_type.title()}**\n\n"
+            f"Location A: **{location_a}**\n\n"
+            f"Location B: **{location_b}**"
         )
 
-        selected_a = st.selectbox(
-            "Select Location A:",
-            options=selection_labels,
-            index=0,
-            key="minimum_location_a",
-            disabled=is_processing,
-        )
-        selected_b = st.selectbox(
-            "Select Location B:",
-            options=selection_labels,
-            index=1 if len(selection_labels) > 1 else 0,
-            key="minimum_location_b",
+        # Confirm / Generate button with JavaScript-based disable protection
+        confirm_btn = st.button(
+            "🚀 Calculate Minimum Distance",
+            key="confirm_minimum_generate",
+            use_container_width=True,
             disabled=is_processing,
         )
 
-        confirm_btn = False
-        if not is_processing:
-            confirm_btn = st.button(
-                "✅ Confirm Selection",
-                key="confirm_minimum_locations",
-                use_container_width=True,
-            )
+        # Inject JavaScript to prevent double-clicks
+        components.html("""
+        <script>
+        (function() {
+            function disableButton() {
+                const buttons = window.parent.document.querySelectorAll('button');
+                for (const btn of buttons) {
+                    if (btn.innerText && btn.innerText.includes('Calculate Minimum Distance')) {
+                        if (!btn.dataset.minClickHandler) {
+                            btn.dataset.minClickHandler = 'true';
+                            btn.addEventListener('click', function(e) {
+                                this.disabled = true;
+                                this.style.opacity = '0.5';
+                                this.style.pointerEvents = 'none';
+                                this.innerText = '⏳ Processing...';
+                            });
+                        }
+                        break;
+                    }
+                }
+            }
+            disableButton();
+            setTimeout(disableButton, 100);
+            setTimeout(disableButton, 300);
+        })();
+        </script>
+        """, height=0)
 
         if get_command_output() is not None and not is_processing:
             st.divider()
@@ -847,13 +1035,9 @@ def _render_input_panel() -> Optional[str]:
                 _clear_product_viewer()
                 st.rerun()
 
-        if confirm_btn and selected_a and selected_b and not is_processing:
+        if confirm_btn and location_a and location_b and not is_processing:
             st.session_state["command_processing"] = True
-            sel_idx_a = selection_labels.index(selected_a) + 1
-            sel_idx_b = selection_labels.index(selected_b) + 1
-            st.session_state["command_pending_query"] = (
-                f"Select minimum locations {sel_idx_a} and {sel_idx_b}"
-            )
+            st.session_state["command_pending_query"] = "confirm minimum generate"
             st.rerun()
 
         return None
@@ -1061,529 +1245,43 @@ def _render_minimum_range_ring_validator() -> None:
     components.html(html, height=420)
 
 
-def _render_reverse_range_ring_validator() -> None:
-    """Render JavaScript-based real-time validation widget for Reverse Range Ring commands."""
+def _render_murr_validator() -> None:
+    """Render the Multiple Range Ring real-time validator widget."""
     import json
-    
-    # Get the country and city lists for validation
+
+    data_service = get_data_service()
+    countries = data_service.get_country_list()
+
+    html = _render_html_template(
+        "murr_validator.html",
+        replacements={
+            "{{COUNTRIES_JSON}}": json.dumps([c.lower() for c in countries]),
+            "{{COUNTRIES_DISPLAY_JSON}}": json.dumps(sorted(countries)),
+        },
+    )
+
+    components.html(html, height=400)
+
+
+def _render_reverse_range_ring_validator() -> None:
+    """Render the Reverse Range Ring real-time validator widget."""
+    import json
+
     data_service = get_data_service()
     countries = data_service.get_country_list()
     cities = data_service.get_city_list()
-    
-    # Keep original case for display, lowercase for matching
-    countries_display_json = json.dumps(sorted(countries))
-    cities_display_json = json.dumps(sorted(cities))
-    countries_json = json.dumps([c.lower() for c in countries])
-    cities_json = json.dumps([c.lower() for c in cities])
-    
-    validator_html = f"""
-    <style>
-        .rrr-validator {{
-            font-family: "Source Sans Pro", sans-serif;
-            background: #f8f9fa;
-            border: 1px solid #e0e0e0;
-            border-radius: 6px;
-            padding: 12px;
-            margin: 10px 0;
-        }}
-        .rrr-validator-title {{
-            font-size: 13px;
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 8px;
-        }}
-        .rrr-section {{
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 4px 0;
-            font-size: 13px;
-        }}
-        .rrr-icon {{
-            width: 18px;
-            height: 18px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 14px;
-        }}
-        .rrr-valid {{ color: #28a745; }}
-        .rrr-invalid {{ color: #dc3545; }}
-        .rrr-warning {{ color: #ffc107; }}
-        .rrr-pending {{ color: #6c757d; }}
-        .rrr-label {{
-            color: #555;
-            min-width: 100px;
-        }}
-        .rrr-value {{
-            color: #333;
-            font-weight: 500;
-        }}
-        .rrr-match {{
-            color: #28a745;
-            font-size: 11px;
-            margin-left: 4px;
-        }}
-        .rrr-hint {{
-            font-size: 11px;
-            color: #888;
-            font-style: italic;
-            margin-top: 8px;
-        }}
-        /* Lookup section styles */
-        .rrr-lookup-section {{
-            margin-top: 12px;
-            padding-top: 10px;
-            border-top: 1px solid #e0e0e0;
-        }}
-        .rrr-lookup-title {{
-            font-size: 12px;
-            font-weight: 600;
-            color: #555;
-            margin-bottom: 8px;
-        }}
-        .rrr-lookup-row {{
-            display: flex;
-            gap: 12px;
-            margin-bottom: 8px;
-        }}
-        .rrr-lookup-col {{
-            flex: 1;
-        }}
-        .rrr-lookup-label {{
-            font-size: 11px;
-            color: #666;
-            margin-bottom: 4px;
-        }}
-        .rrr-search-input {{
-            width: 100%;
-            padding: 6px 8px;
-            font-size: 12px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            box-sizing: border-box;
-        }}
-        .rrr-search-input:focus {{
-            outline: none;
-            border-color: #ff4b4b;
-        }}
-        .rrr-suggestions {{
-            max-height: 150px;
-            overflow-y: auto;
-            overflow-x: hidden;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            background: white;
-            margin-top: 4px;
-            display: none;
-            scrollbar-width: thin;
-            scrollbar-color: #888 #f0f0f0;
-        }}
-        .rrr-suggestions::-webkit-scrollbar {{
-            width: 8px;
-        }}
-        .rrr-suggestions::-webkit-scrollbar-track {{
-            background: #f0f0f0;
-            border-radius: 4px;
-        }}
-        .rrr-suggestions::-webkit-scrollbar-thumb {{
-            background: #888;
-            border-radius: 4px;
-        }}
-        .rrr-suggestions::-webkit-scrollbar-thumb:hover {{
-            background: #666;
-        }}
-        .rrr-suggestions.active {{
-            display: block;
-        }}
-        .rrr-suggestion {{
-            padding: 6px 8px;
-            font-size: 11px;
-            cursor: pointer;
-            border-bottom: 1px solid #eee;
-        }}
-        .rrr-suggestion:last-child {{
-            border-bottom: none;
-        }}
-        .rrr-suggestion:hover {{
-            background: #f0f2f6;
-        }}
-        .rrr-suggestion-match {{
-            background: #fff3cd;
-        }}
-        .rrr-no-results {{
-            padding: 6px 8px;
-            font-size: 11px;
-            color: #888;
-            font-style: italic;
-        }}
-    </style>
-    <div class="rrr-validator" id="rrr-validator-widget">
-        <div class="rrr-validator-title">📋 Query Validator</div>
-        <div class="rrr-section" id="rrr-verb">
-            <span class="rrr-icon rrr-pending" id="rrr-verb-icon">○</span>
-            <span class="rrr-label">Action:</span>
-            <span class="rrr-value" id="rrr-verb-value">—</span>
-        </div>
-        <div class="rrr-section" id="rrr-type">
-            <span class="rrr-icon rrr-pending" id="rrr-type-icon">○</span>
-            <span class="rrr-label">Ring Type:</span>
-            <span class="rrr-value" id="rrr-type-value">—</span>
-        </div>
-        <div class="rrr-section" id="rrr-from">
-            <span class="rrr-icon rrr-pending" id="rrr-from-icon">○</span>
-            <span class="rrr-label">Preposition:</span>
-            <span class="rrr-value" id="rrr-from-value">—</span>
-        </div>
-        <div class="rrr-section" id="rrr-country">
-            <span class="rrr-icon rrr-pending" id="rrr-country-icon">○</span>
-            <span class="rrr-label">Country:</span>
-            <span class="rrr-value" id="rrr-country-value">—</span>
-        </div>
-        <div class="rrr-section" id="rrr-target">
-            <span class="rrr-icon rrr-pending" id="rrr-target-icon">○</span>
-            <span class="rrr-label">Target Prep:</span>
-            <span class="rrr-value" id="rrr-target-value">—</span>
-        </div>
-        <div class="rrr-section" id="rrr-city">
-            <span class="rrr-icon rrr-pending" id="rrr-city-icon">○</span>
-            <span class="rrr-label">City:</span>
-            <span class="rrr-value" id="rrr-city-value">—</span>
-        </div>
-        <div class="rrr-hint" id="rrr-hint">Type your command above to see validation...</div>
-        
-        <!-- Lookup Section -->
-        <div class="rrr-lookup-section">
-            <div class="rrr-lookup-title">🔍 Name Lookup (search to find exact format)</div>
-            <div class="rrr-lookup-row">
-                <div class="rrr-lookup-col">
-                    <div class="rrr-lookup-label">Country Search:</div>
-                    <input type="text" class="rrr-search-input" id="rrr-country-search" placeholder="Type to search countries..." autocomplete="off">
-                    <div class="rrr-suggestions" id="rrr-country-suggestions"></div>
-                </div>
-                <div class="rrr-lookup-col">
-                    <div class="rrr-lookup-label">City Search:</div>
-                    <input type="text" class="rrr-search-input" id="rrr-city-search" placeholder="Type to search cities..." autocomplete="off">
-                    <div class="rrr-suggestions" id="rrr-city-suggestions"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <script>
-        (function() {{
-            // Valid options
-            const validVerbs = ['generate', 'create', 'build', 'show'];
-            const validTypes = ['reverse range ring', 'reverse ring', 'launch envelope', 'reverse range'];
-            const validFromPreps = ['from', 'within', 'inside'];
-            const validTargetPreps = ['against', 'to', 'toward', 'towards'];
-            const validCountries = {countries_json};
-            const validCities = {cities_json};
-            const countriesDisplay = {countries_display_json};
-            const citiesDisplay = {cities_display_json};
-            
-            // Fuzzy match function with multiple match types
-            function fuzzyMatch(input, options) {{
-                if (!input) return null;
-                const lower = input.toLowerCase().trim();
-                // Exact match first
-                if (options.includes(lower)) return lower;
-                // Prefix match
-                const prefixMatch = options.find(opt => opt.startsWith(lower));
-                if (prefixMatch) return prefixMatch;
-                // Contains match (also check if any word in option starts with input)
-                for (const opt of options) {{
-                    const words = opt.split(/[\\s,]+/);
-                    for (const word of words) {{
-                        if (word.startsWith(lower) || lower.startsWith(word)) {{
-                            return opt;
-                        }}
-                    }}
-                }}
-                // General contains
-                const containsMatch = options.find(opt => opt.includes(lower) || lower.includes(opt));
-                return containsMatch || null;
-            }}
-            
-            // Get fuzzy matches for suggestions (returns multiple)
-            function getFuzzyMatches(input, displayOptions, maxResults = 10) {{
-                if (!input || input.length < 1) return displayOptions.slice(0, maxResults);
-                const lower = input.toLowerCase().trim();
-                const results = [];
-                
-                // Score each option
-                const scored = displayOptions.map(opt => {{
-                    const optLower = opt.toLowerCase();
-                    let score = 0;
-                    
-                    // Exact match = highest
-                    if (optLower === lower) score = 100;
-                    // Starts with = high
-                    else if (optLower.startsWith(lower)) score = 80;
-                    // Word in option starts with input
-                    else {{
-                        const words = optLower.split(/[\\s,]+/);
-                        for (const word of words) {{
-                            if (word.startsWith(lower)) {{
-                                score = 70;
-                                break;
-                            }}
-                        }}
-                    }}
-                    // Contains anywhere
-                    if (score === 0 && optLower.includes(lower)) score = 50;
-                    // Input contains option word
-                    if (score === 0) {{
-                        const words = optLower.split(/[\\s,]+/);
-                        for (const word of words) {{
-                            if (lower.includes(word) && word.length > 2) {{
-                                score = 40;
-                                break;
-                            }}
-                        }}
-                    }}
-                    
-                    return {{ opt, score }};
-                }});
-                
-                return scored
-                    .filter(s => s.score > 0)
-                    .sort((a, b) => b.score - a.score)
-                    .slice(0, maxResults)
-                    .map(s => s.opt);
-            }}
-            
-            // valid: 'exact' | 'fuzzy' | false | null
-            function setStatus(id, valid, value, matched) {{
-                const icon = document.getElementById(id + '-icon');
-                const valueEl = document.getElementById(id + '-value');
-                if (!icon || !valueEl) return;
-                
-                if (valid === 'exact') {{
-                    icon.textContent = '✓';
-                    icon.className = 'rrr-icon rrr-valid';
-                }} else if (valid === 'fuzzy') {{
-                    icon.textContent = '⚠';
-                    icon.className = 'rrr-icon rrr-warning';
-                }} else if (valid === false) {{
-                    icon.textContent = '✗';
-                    icon.className = 'rrr-icon rrr-invalid';
-                }} else {{
-                    icon.textContent = '○';
-                    icon.className = 'rrr-icon rrr-pending';
-                }}
-                
-                if (value && matched && matched !== value.toLowerCase()) {{
-                    valueEl.innerHTML = value + '<span class="rrr-match"> (use: ' + matched + ')</span>';
-                }} else {{
-                    valueEl.textContent = value || '—';
-                }}
-            }}
-            
-            function parseAndValidate(text) {{
-                const hint = document.getElementById('rrr-hint');
-                if (!text || text.trim().length < 3) {{
-                    ['rrr-verb', 'rrr-type', 'rrr-from', 'rrr-country', 'rrr-target', 'rrr-city'].forEach(id => {{
-                        setStatus(id, null, '—');
-                    }});
-                    if (hint) hint.textContent = 'Type your command above to see validation...';
-                    return;
-                }}
-                
-                const lower = text.toLowerCase().trim();
 
-                if (lower.includes('minimum') || lower.includes('min distance') || lower.includes('minimum distance')) {{
-                    ['rrr-verb', 'rrr-type', 'rrr-from', 'rrr-country', 'rrr-target', 'rrr-city'].forEach(id => {{
-                        setStatus(id, null, '—');
-                    }});
-                    if (hint) hint.textContent = 'This looks like a Minimum Range Ring command. See Minimum Range Ring tab.';
-                    return;
-                }}
+    html = _render_html_template(
+        "rrr_validator.html",
+        replacements={
+            "{{COUNTRIES_JSON}}": json.dumps([c.lower() for c in countries]),
+            "{{CITIES_JSON}}": json.dumps([c.lower() for c in cities]),
+            "{{COUNTRIES_DISPLAY_JSON}}": json.dumps(sorted(countries)),
+            "{{CITIES_DISPLAY_JSON}}": json.dumps(sorted(cities)),
+        },
+    )
 
-                if (lower.includes('single range ring') || lower.includes('single ring')) {{
-                    ['rrr-verb', 'rrr-type', 'rrr-from', 'rrr-country', 'rrr-target', 'rrr-city'].forEach(id => {{
-                        setStatus(id, null, '—');
-                    }});
-                    if (hint) hint.textContent = 'This looks like a Single Range Ring command. See Single Range Ring tab.';
-                    return;
-                }}
-                
-                // Verb validation
-                let verbMatch = validVerbs.find(v => lower.startsWith(v));
-                setStatus('rrr-verb', verbMatch ? 'exact' : false, verbMatch || (lower.split(' ')[0] || ''), verbMatch);
-                
-                // Type validation
-                let typeMatch = validTypes.find(t => lower.includes(t));
-                setStatus('rrr-type', typeMatch ? 'exact' : false, typeMatch || '—', typeMatch);
-                
-                // From preposition validation
-                let fromMatch = validFromPreps.find(p => {{
-                    const typeEnd = typeMatch ? lower.indexOf(typeMatch) + typeMatch.length : 0;
-                    const afterType = lower.substring(typeEnd);
-                    return afterType.includes(' ' + p + ' ') || afterType.endsWith(' ' + p);
-                }});
-                setStatus('rrr-from', fromMatch ? 'exact' : false, fromMatch || '—', fromMatch);
-                
-                let country = null;
-                let city = null;
-                let targetPrep = null;
-                
-                if (fromMatch) {{
-                    const typeEnd = typeMatch ? lower.indexOf(typeMatch) + typeMatch.length : 0;
-                    const fromToken = ' ' + fromMatch;
-                    const fromIdx = lower.indexOf(fromToken + ' ', typeEnd);
-                    let afterFrom = '';
-
-                    if (fromIdx >= 0) {{
-                        afterFrom = lower.substring(fromIdx + fromMatch.length + 2);
-                    }} else if (lower.endsWith(fromToken)) {{
-                        afterFrom = '';
-                    }}
-
-                    if (afterFrom !== '') {{
-                        const targetMatch = validTargetPreps.find(tp => (
-                            afterFrom.includes(' ' + tp + ' ') || afterFrom.endsWith(' ' + tp)
-                        ));
-                        if (targetMatch) {{
-                            const tpIdx = afterFrom.indexOf(' ' + targetMatch + ' ');
-                            targetPrep = targetMatch;
-                            if (tpIdx >= 0) {{
-                                country = afterFrom.substring(0, tpIdx).trim();
-                                city = afterFrom.substring(tpIdx + targetMatch.length + 2).trim().replace(/\\.$/, '');
-                            }} else {{
-                                country = afterFrom.substring(0, afterFrom.length - targetMatch.length - 1).trim();
-                                city = '';
-                            }}
-                        }} else {{
-                            country = afterFrom.trim();
-                        }}
-                    }}
-                }}
-                
-                // Country validation: exact vs fuzzy vs no match
-                let countryStatus = false;
-                let countryMatch = null;
-                if (country) {{
-                    const countryLower = country.toLowerCase();
-                    if (validCountries.includes(countryLower)) {{
-                        countryStatus = 'exact';
-                        countryMatch = countryLower;
-                    }} else {{
-                        countryMatch = fuzzyMatch(country, validCountries);
-                        if (countryMatch) {{
-                            countryStatus = 'fuzzy';  // Found fuzzy match but not exact
-                        }}
-                    }}
-                }}
-                setStatus('rrr-country', countryStatus, country || '—', countryMatch);
-                
-                // Target prep validation
-                setStatus('rrr-target', targetPrep ? 'exact' : false, targetPrep || '—', targetPrep);
-                
-                // City validation: exact vs fuzzy vs no match
-                let cityStatus = false;
-                let cityMatch = null;
-                if (city) {{
-                    const cityLower = city.toLowerCase();
-                    if (validCities.includes(cityLower)) {{
-                        cityStatus = 'exact';
-                        cityMatch = cityLower;
-                    }} else {{
-                        cityMatch = fuzzyMatch(city, validCities);
-                        if (cityMatch) {{
-                            cityStatus = 'fuzzy';  // Found fuzzy match but not exact
-                        }}
-                    }}
-                }}
-                setStatus('rrr-city', cityStatus, city || '—', cityMatch);
-                
-                // Check overall validity
-                const allExact = verbMatch && typeMatch && fromMatch && (countryStatus === 'exact') && targetPrep && (cityStatus === 'exact');
-                const allValid = verbMatch && typeMatch && fromMatch && countryMatch && targetPrep && cityMatch;
-                const hasFuzzy = (countryStatus === 'fuzzy') || (cityStatus === 'fuzzy');
-                const partialValid = typeMatch || countryMatch || cityMatch;
-                
-                if (allExact) {{
-                    if (hint) hint.textContent = '✅ Query looks valid! Click Execute to proceed.';
-                }} else if (allValid && hasFuzzy) {{
-                    if (hint) hint.textContent = '⚠️ Query may work, but check ⚠ items for exact format.';
-                }} else if (partialValid) {{
-                    if (hint) hint.textContent = '⚠️ Some fields need attention. Check the items marked with ✗ or ⚠';
-                }} else {{
-                    if (hint) hint.textContent = 'Format: Generate a reverse range ring from [Country] against [City]';
-                }}
-            }}
-            
-            // Setup lookup search boxes
-            function setupLookup(inputId, suggestionsId, displayOptions) {{
-                const input = document.getElementById(inputId);
-                const suggestions = document.getElementById(suggestionsId);
-                if (!input || !suggestions) return;
-                
-                input.addEventListener('input', function() {{
-                    const val = this.value;
-                    const matches = getFuzzyMatches(val, displayOptions, 10);
-                    
-                    if (matches.length > 0) {{
-                        suggestions.innerHTML = matches.map(m => 
-                            '<div class="rrr-suggestion">' + m + '</div>'
-                        ).join('');
-                        suggestions.classList.add('active');
-                    }} else {{
-                        suggestions.innerHTML = '<div class="rrr-no-results">No matches found</div>';
-                        suggestions.classList.add('active');
-                    }}
-                }});
-                
-                input.addEventListener('focus', function() {{
-                    if (this.value.length >= 1 || suggestions.innerHTML) {{
-                        suggestions.classList.add('active');
-                    }}
-                }});
-                
-                input.addEventListener('blur', function() {{
-                    setTimeout(() => suggestions.classList.remove('active'), 200);
-                }});
-                
-                suggestions.addEventListener('click', function(e) {{
-                    if (e.target.classList.contains('rrr-suggestion')) {{
-                        input.value = e.target.textContent;
-                        suggestions.classList.remove('active');
-                    }}
-                }});
-            }}
-            
-            // Initialize lookup boxes
-            setupLookup('rrr-country-search', 'rrr-country-suggestions', countriesDisplay);
-            setupLookup('rrr-city-search', 'rrr-city-suggestions', citiesDisplay);
-            
-            function attachListener() {{
-                const textareas = window.parent.document.querySelectorAll('textarea');
-                for (const ta of textareas) {{
-                    if (ta.placeholder && ta.placeholder.includes('Type a question')) {{
-                        ta.addEventListener('input', function(e) {{
-                            parseAndValidate(e.target.value);
-                        }});
-                        parseAndValidate(ta.value);
-                        return true;
-                    }}
-                }}
-                return false;
-            }}
-            
-            let attempts = 0;
-            const maxAttempts = 20;
-            const tryAttach = setInterval(function() {{
-                attempts++;
-                if (attachListener() || attempts >= maxAttempts) {{
-                    clearInterval(tryAttach);
-                }}
-            }}, 200);
-        }})();
-    </script>
-    """
-    
-    components.html(validator_html, height=430)
+    components.html(html, height=430)
 
 
 def _render_help_section() -> None:
@@ -1630,11 +1328,17 @@ def _render_help_section() -> None:
             _render_single_range_ring_validator()
         
         with tab_multi:
-            st.markdown("**Multiple Range Ring**")
-            st.markdown("*Coming Soon*")
-            st.markdown("Generate multiple concentric range rings from a country or point.")
+            st.markdown("**Multiple Range Ring Task**")
+            st.markdown(
+                "Use the format: `Generate {multiple range rings} from {Country} at {distance 1, distance 2...} "
+                "{km|mi|nm}. The respective missile names are {name 1, name 2...}.`"
+            )
             st.markdown("**Example:**")
-            st.code("Generate multiple range rings from North Korea at 500, 1000, 1500 km")
+            st.code(
+                "Generate multiple range rings from Korea, North at 500, 1000, 1500 km. "
+                "The respective missile names are Missile 1, Missile 2 and Missile 3."
+            )
+            _render_murr_validator()
         
         with tab_min:
             st.markdown("**Minimum Range Ring Task**")
@@ -1744,9 +1448,145 @@ def _mock_intent_response(query: str) -> tuple[CommandOutput, str, str]:
     """Return a placeholder response until full intent routing is implemented."""
     
     # =========================================================================
-    # Handle Minimum Range Ring location selection (Step 2)
+    # Handle Multiple Range Ring confirmation (Step 2)
+    # =========================================================================
+    multiple_pending = get_command_multiple_pending()
+    if multiple_pending and query == "confirm multiple generate":
+        # Get ranges from session state (editable by user in Step 2 UI)
+        ranges_data = st.session_state.get("command_multi_ranges", [])
+        if not ranges_data:
+            st.session_state["command_processing"] = False
+            return (
+                "**Configuration Error**\n\nNo range rings configured. Please add at least one range.",
+                "Multiple Range Ring",
+                "Pending",
+            )
+
+        country_name = multiple_pending.get("country_name")
+        country_code = multiple_pending.get("country_code")
+
+        # Build ranges tuples from session state
+        ranges = []
+        for r in ranges_data:
+            unit_map = {
+                "km": DistanceUnit.KILOMETERS,
+                "mi": DistanceUnit.MILES,
+                "nm": DistanceUnit.NAUTICAL_MILES,
+            }
+            unit = unit_map.get(r.get("unit", "km"), DistanceUnit.KILOMETERS)
+            label = r.get("label") if r.get("label") else None
+            ranges.append((r.get("value", 1000), unit, label))
+
+        try:
+            data_service = get_data_service()
+            country_geometry = data_service.get_country_geometry(country_code)
+            if country_geometry is None:
+                raise CommandParsingError(f"Could not load geometry for {country_name}.")
+
+            # Single source for this run: first weapon with a source in the country's inventory
+            weapon_source = None
+            try:
+                weapons = data_service.get_weapon_systems(country_code)
+                first_with_source = next((w for w in weapons if w.get("source")), None)
+                if first_with_source:
+                    weapon_source = first_with_source.get("source")
+            except Exception:
+                weapon_source = None
+
+            input_data = MultipleRangeRingInput(
+                origin_type=OriginType.COUNTRY,
+                country_code=country_code,
+                ranges=ranges,
+                weapon_source=weapon_source,
+                resolution="normal",
+            )
+
+            progress_bar = st.progress(0, text="0% - Initializing...")
+
+            def update_progress(pct: float, status: str):
+                progress_bar.progress(min(pct, 1.0), text=f"{int(pct * 100)}% - {status}")
+
+            output = generate_multiple_range_rings(
+                input_data,
+                origin_geometry=country_geometry,
+                origin_name=country_name,
+                progress_callback=update_progress,
+            )
+            original_query = multiple_pending.get("original_query", "")
+            output.description = f"User Query: {original_query}" if original_query else f"Multiple Range Ring: {country_name}"
+            progress_bar.progress(1.0, text="100% - Complete!")
+
+            # Update pending history entry
+            _update_multiple_pending_history_entry(
+                country_name,
+                len(ranges),
+                "Completed",
+                output=output,
+            )
+
+            # Clear pending state and session state
+            set_command_multiple_pending(None)
+            if "command_multi_ranges" in st.session_state:
+                del st.session_state["command_multi_ranges"]
+            st.session_state["command_processing"] = False
+            return output, "Multiple Range Ring", "Completed (Updated)"
+        except CommandParsingError as exc:
+            st.session_state["command_processing"] = False
+            return f"**Command Center Error**\n\n{exc}", "Multiple Range Ring", "Failed"
+
+    # =========================================================================
+    # Handle Minimum Range Ring confirmation (Step 2)
     # =========================================================================
     minimum_pending = get_command_minimum_pending()
+    if minimum_pending and query == "confirm minimum generate":
+        location_type = minimum_pending.get("location_type")
+        location_a = minimum_pending.get("location_a")
+        location_b = minimum_pending.get("location_b")
+
+        if not location_a or not location_b:
+            st.session_state["command_processing"] = False
+            return (
+                "**Configuration Error**\n\nMissing location data. Please try again.",
+                "Minimum Range Ring",
+                "Failed",
+            )
+
+        progress_bar = st.progress(0, text="0% - Initializing...")
+
+        def update_progress(pct: float, status: str):
+            progress_bar.progress(min(pct, 1.0), text=f"{int(pct * 100)}% - {status}")
+
+        try:
+            output, distance_km = _generate_minimum_range_output(
+                location_type,
+                location_a,
+                location_b,
+                progress_callback=update_progress,
+            )
+            original_query = minimum_pending.get("original_query", "")
+            output.description = f"User Query: {original_query}" if original_query else f"Minimum Range Ring: {location_a} ↔ {location_b}"
+            progress_bar.progress(1.0, text="100% - Complete!")
+
+            _update_minimum_pending_history_entry(
+                location_type,
+                location_a,
+                location_b,
+                distance_km,
+                "Completed",
+                output=output,
+            )
+
+            set_command_minimum_pending(None)
+            st.session_state["command_processing"] = False
+            return output, "Minimum Range Ring", "Completed (Updated)"
+        except CommandParsingError as exc:
+            progress_bar.progress(1.0, text="Error!")
+            st.session_state["command_processing"] = False
+            return f"**Command Center Error**\n\n{exc}", "Minimum Range Ring", "Failed"
+
+    # =========================================================================
+    # Handle Minimum Range Ring location selection (legacy Step 2)
+    # =========================================================================
     minimum_selection = _extract_minimum_location_selection(query)
     if minimum_pending and minimum_selection:
         selection_labels = minimum_pending.get("selection_labels", [])
@@ -1766,6 +1606,7 @@ def _mock_intent_response(query: str) -> tuple[CommandOutput, str, str]:
                     location_b,
                     progress_callback=update_progress,
                 )
+                output.description = f"User Query: {query}"
                 progress_bar.progress(1.0, text="100% - Complete!")
 
                 _update_minimum_pending_history_entry(
@@ -1839,6 +1680,8 @@ def _mock_intent_response(query: str) -> tuple[CommandOutput, str, str]:
                     weapon,
                     progress_callback=update_progress,
                 )
+                original_query = single_pending.get("original_query", "")
+                output.description = f"User Query: {original_query}" if original_query else f"Single Range Ring: {single_pending['country_name']}"
                 progress_bar.progress(1.0, text="100% - Complete!")
                 
                 _update_single_pending_history_entry(
@@ -1891,6 +1734,7 @@ def _mock_intent_response(query: str) -> tuple[CommandOutput, str, str]:
                     "country_name": matched_country,
                     "country_code": country_code,
                     "weapons": weapons,
+                    "original_query": query,
                 }
             )
 
@@ -1900,7 +1744,7 @@ def _mock_intent_response(query: str) -> tuple[CommandOutput, str, str]:
             return f"**Command Center Error**\n\n{exc}", "Single Range Ring", "Failed"
     
     # =========================================================================
-    # Handle Minimum Range Ring initial request (Step 1)
+    # Handle Minimum Range Ring initial request (Step 1 - set pending state)
     # =========================================================================
     minimum_request = _extract_minimum_range_request(query)
     if minimum_request:
@@ -1912,34 +1756,112 @@ def _mock_intent_response(query: str) -> tuple[CommandOutput, str, str]:
             city_match_a = _fuzzy_match(location_a, data_service.get_city_list(), cutoff=0.6)
             city_match_b = _fuzzy_match(location_b, data_service.get_city_list(), cutoff=0.6)
 
+            # Determine location type from matches
             if (country_match_a and country_match_b) and not (city_match_a and city_match_b):
                 location_type = "countries"
+                matched_a = country_match_a
+                matched_b = country_match_b
             elif (city_match_a and city_match_b) and not (country_match_a and country_match_b):
                 location_type = "cities"
+                matched_a = city_match_a
+                matched_b = city_match_b
             else:
-                location_type = "unknown"
+                # Ambiguous - default to countries if both match countries
+                if country_match_a and country_match_b:
+                    location_type = "countries"
+                    matched_a = country_match_a
+                    matched_b = country_match_b
+                elif city_match_a and city_match_b:
+                    location_type = "cities"
+                    matched_a = city_match_a
+                    matched_b = city_match_b
+                else:
+                    # Couldn't match both locations
+                    return (
+                        f"**Location Error**\n\nCould not match both '{location_a}' and '{location_b}' "
+                        "as valid countries or cities.",
+                        "Minimum Range Ring",
+                        "Failed",
+                    )
 
-            if location_type == "unknown":
-                set_command_minimum_pending({"location_type": location_type})
-                message = _build_minimum_location_type_message()
-                return message, "Minimum Range Ring", "Pending"
-
-            selection_labels = (
-                data_service.get_country_list()
-                if location_type == "countries"
-                else data_service.get_city_list()
-            )
+            # Set pending state with the matched locations for Step 2 confirmation
             set_command_minimum_pending(
                 {
                     "location_type": location_type,
-                    "selection_labels": selection_labels,
+                    "location_a": matched_a,
+                    "location_b": matched_b,
+                    "original_query": query,
                 }
             )
-            st.session_state["command_processing"] = False
-            message = _build_minimum_location_selection_message(location_type, selection_labels)
-            return message, "Minimum Range Ring", "Pending"
+
+            return (
+                f"**Minimum Range Ring Setup**\n\n"
+                f"Location Type: **{location_type.title()}**\n\n"
+                f"Location A: **{matched_a}**\n\n"
+                f"Location B: **{matched_b}**\n\n"
+                f"Review and confirm in the input panel.",
+                "Minimum Range Ring",
+                "Pending",
+            )
         except CommandParsingError as exc:
             return f"**Command Center Error**\n\n{exc}", "Minimum Range Ring", "Failed"
+
+    # =========================================================================
+    # Handle Multiple Range Ring initial request (Step 1 - set pending state)
+    # =========================================================================
+    multiple_request = _extract_multiple_range_request(query)
+    if multiple_request:
+        country = multiple_request["country"]
+        distances = multiple_request["distances"]
+        unit_raw = multiple_request["unit"]
+        missile_names = multiple_request["missile_names"]
+
+        unit_map = {
+            "km": DistanceUnit.KILOMETERS,
+            "mi": DistanceUnit.MILES,
+            "nm": DistanceUnit.NAUTICAL_MILES,
+        }
+        unit = unit_map.get(unit_raw, DistanceUnit.KILOMETERS)
+
+        # Build ranges tuples for pending state
+        ranges = []
+        for idx, distance in enumerate(distances):
+            label = missile_names[idx] if idx < len(missile_names) else None
+            ranges.append((distance, unit, label))
+
+        try:
+            data_service = get_data_service()
+            matched_country = _fuzzy_match(country, data_service.get_country_list(), cutoff=0.6)
+            if not matched_country:
+                raise CommandParsingError(f"Could not match country '{country}' in request.")
+
+            country_code = data_service.get_country_code(matched_country)
+            if not country_code:
+                raise CommandParsingError(f"Could not resolve ISO code for '{matched_country}'.")
+
+            # Set pending state for Step 2 UI
+            set_command_multiple_pending(
+                {
+                    "country_name": matched_country,
+                    "country_code": country_code,
+                    "ranges": ranges,
+                    "original_query": query,
+                }
+            )
+
+            # Clear any existing command_multi_ranges to force re-initialization
+            if "command_multi_ranges" in st.session_state:
+                del st.session_state["command_multi_ranges"]
+
+            return (
+                f"**Multiple Range Ring Setup**\n\n"
+                f"Country: **{matched_country}**\n\n"
+                f"Parsed {len(ranges)} range ring(s). Review and confirm in the input panel.",
+                "Multiple Range Ring",
+                "Pending",
+            )
+        except CommandParsingError as exc:
+            return f"**Command Center Error**\n\n{exc}", "Multiple Range Ring", "Failed"
 
     # =========================================================================
     # Handle Reverse Range Ring weapon selection (Step 2)
@@ -1970,6 +1892,8 @@ def _mock_intent_response(query: str) -> tuple[CommandOutput, str, str]:
                     weapon,
                     progress_callback=update_progress,
                 )
+                original_query = pending.get("original_query", "")
+                output.description = f"User Query: {original_query}" if original_query else f"Reverse Range Ring: {pending['country_name']} → {pending['city_name']}"
                 progress_bar.progress(1.0, text="100% - Complete!")
                 
                 # Update the pending history entry with completion details and output
@@ -2050,6 +1974,7 @@ def _mock_intent_response(query: str) -> tuple[CommandOutput, str, str]:
                     "country_code": country_code,
                     "target_coords": target_coords,
                     "weapons": weapons,
+                    "original_query": query,
                 }
             )
 
@@ -2071,7 +1996,6 @@ def render_command_center() -> None:
     """Render the Command tab page layout."""
     st.header("⚡ ORRG – Command Center")
 
-    was_processing = st.session_state.get("command_processing", False)
     query = _render_input_panel()
     if query:
         output, resolution, status = _mock_intent_response(query)
@@ -2083,7 +2007,12 @@ def render_command_center() -> None:
         # Only add a new history entry if we're not updating an existing one
         # "Completed (Updated)" means we already updated the pending entry
         if status != "Completed (Updated)":
-            is_task = resolution in ("Reverse Range Ring", "Single Range Ring", "Minimum Range Ring")
+            is_task = resolution in (
+                "Reverse Range Ring",
+                "Single Range Ring",
+                "Minimum Range Ring",
+                "Multiple Range Ring",
+            )
             add_command_history_entry(
                 {
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -2099,10 +2028,10 @@ def render_command_center() -> None:
             get_command_reverse_pending() is not None
             or get_command_single_pending() is not None
             or get_command_minimum_pending() is not None
+            or get_command_multiple_pending() is not None
         ):
             st.rerun()
 
-    if not was_processing and not st.session_state.get("command_processing", False):
-        _render_help_section()
+    _render_help_section()
     _render_product_output_viewer()
     _render_history()

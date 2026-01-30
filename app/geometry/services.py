@@ -449,6 +449,7 @@ def generate_multiple_range_rings(
         geodesic_method="geographiclib",
         origin_name=origin_name,
         origin_type=input_data.origin_type.value,
+        weapon_source=getattr(input_data, "weapon_source", None),
     )
     
     report_progress(0.98, "Creating output object...")
@@ -745,6 +746,8 @@ def generate_reverse_range_ring(
         range_classification=range_class.value if range_class else None,
         origin_name=input_data.target_point.name,
         origin_type="target_point",
+        weapon_name=getattr(input_data, "weapon_system", None),
+        weapon_source=getattr(input_data, "weapon_source", None),
     )
     
     report_progress(0.96, "Creating output object...")

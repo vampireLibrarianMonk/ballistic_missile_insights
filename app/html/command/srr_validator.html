@@ -274,6 +274,14 @@
                 return;
             }
 
+            if (lower.includes('multiple range ring') || lower.includes('multiple range rings') || lower.includes('multiple rings')) {
+                ['srr-verb', 'srr-type', 'srr-from', 'srr-country'].forEach(id => {
+                    setStatus(id, null, '—');
+                });
+                if (hint) hint.textContent = 'This looks like a Multiple Range Ring command. See Multiple Range Ring tab.';
+                return;
+            }
+
             // Check if this looks like a single range ring command (not reverse)
             if (lower.includes('reverse') || lower.includes('launch envelope')) {
                 ['srr-verb', 'srr-type', 'srr-from', 'srr-country'].forEach(id => {

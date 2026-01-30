@@ -313,6 +313,30 @@
 
             const lower = text.toLowerCase().trim();
 
+            if (lower.includes('minimum') || lower.includes('min distance') || lower.includes('minimum distance')) {
+                ['rrr-verb', 'rrr-type', 'rrr-from', 'rrr-country', 'rrr-target', 'rrr-city'].forEach(id => {
+                    setStatus(id, null, '—');
+                });
+                if (hint) hint.textContent = 'This looks like a Minimum Range Ring command. See Minimum Range Ring tab.';
+                return;
+            }
+
+            if (lower.includes('single range ring') || lower.includes('single ring')) {
+                ['rrr-verb', 'rrr-type', 'rrr-from', 'rrr-country', 'rrr-target', 'rrr-city'].forEach(id => {
+                    setStatus(id, null, '—');
+                });
+                if (hint) hint.textContent = 'This looks like a Single Range Ring command. See Single Range Ring tab.';
+                return;
+            }
+
+            if (lower.includes('multiple') || lower.includes('missile names are') || lower.includes('respective missile')) {
+                ['rrr-verb', 'rrr-type', 'rrr-from', 'rrr-country', 'rrr-target', 'rrr-city'].forEach(id => {
+                    setStatus(id, null, '—');
+                });
+                if (hint) hint.textContent = 'This looks like a Multiple Range Ring command. See Multiple Range Ring tab.';
+                return;
+            }
+
             // Verb validation
             let verbMatch = validVerbs.find(v => lower.startsWith(v));
             setStatus('rrr-verb', verbMatch ? 'exact' : false, verbMatch || (lower.split(' ')[0] || ''), verbMatch);

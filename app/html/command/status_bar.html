@@ -109,6 +109,20 @@
                     statusText.textContent = `⚠️ ${M.singleFormat} ${M.seeHelp(result.toolName)}`;
                     statusHint.textContent = '';
                 }
+            } else if (cmdType.hasVerb && cmdType.hasMultiple) {
+                const result = V.validateMultiple(lower);
+
+                if (result.allExact) {
+                    statusBar.className = 'cmd-status-bar cmd-status-valid';
+                    statusIcon.textContent = '';
+                    statusText.textContent = M.validatorValid;
+                    statusHint.textContent = '';
+                } else {
+                    statusBar.className = 'cmd-status-bar cmd-status-empty';
+                    statusIcon.textContent = '';
+                    statusText.textContent = `⚠️ ${M.multipleFormat} ${M.seeHelp(result.toolName)}`;
+                    statusHint.textContent = '';
+                }
             } else if (cmdType.hasVerb && cmdType.hasMinimum) {
                 const result = V.validateMinimum(lower);
 

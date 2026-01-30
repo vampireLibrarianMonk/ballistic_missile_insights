@@ -302,6 +302,14 @@
                 return;
             }
 
+            if (lower.includes('multiple range ring') || lower.includes('multiple range rings') || lower.includes('multiple rings')) {
+                ['mrr-verb', 'mrr-type', 'mrr-prep', 'mrr-location-a', 'mrr-target', 'mrr-location-b'].forEach(id => {
+                    setStatus(id, null, '—');
+                });
+                if (hint) hint.textContent = 'This looks like a Multiple Range Ring command. See Multiple Range Ring tab.';
+                return;
+            }
+
             if (lower.includes('single range ring') || lower.includes('single ring')) {
                 ['mrr-verb', 'mrr-type', 'mrr-prep', 'mrr-location-a', 'mrr-target', 'mrr-location-b'].forEach(id => {
                     setStatus(id, null, '—');
