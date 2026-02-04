@@ -13,6 +13,10 @@ project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
+# Prevent module name collision when running via `streamlit run app/app.py`
+if "app" in sys.modules and not hasattr(sys.modules["app"], "__path__"):
+    del sys.modules["app"]
+
 import streamlit as st
 
 # Page configuration must be first Streamlit command
@@ -37,9 +41,11 @@ from app.ui.news.news_feed import (
     create_sample_events, is_analyst_mode,
 )
 from app.ui.news.world_map import get_event_color
+from app.llm.bedrock_client import get_profile_options
+from app.events.summarization import summarize_events
 
 
-def render_news_filter_panel() -> dict:
+def render_news_filter_panel(events: list[NewsEvent]) -> dict:
     """
     Render the news filter panel in an expander.
     
@@ -49,6 +55,12 @@ def render_news_filter_panel() -> dict:
     from datetime import datetime, timedelta
     
     filters = get_news_filters()
+    
+    event_dates = [e.event_date.date() for e in events] if events else []
+    auto_min_date = min(event_dates) if event_dates else datetime.now().date()
+    auto_max_date = max(event_dates) if event_dates else datetime.now().date()
+    default_date_from = filters.get("date_from") or auto_min_date
+    default_date_to = filters.get("date_to") or auto_max_date
     
     with st.expander("🔍 Event Filters", expanded=False):
         col1, col2 = st.columns(2)
@@ -107,13 +119,13 @@ def render_news_filter_panel() -> dict:
         with col3:
             date_from = st.date_input(
                 "From Date",
-                value=filters.get("date_from", datetime.now() - timedelta(days=30)),
+                value=default_date_from,
                 key="news_filter_date_from",
             )
         with col4:
             date_to = st.date_input(
                 "To Date",
-                value=filters.get("date_to", datetime.now()),
+                value=default_date_to,
                 key="news_filter_date_to",
             )
         
@@ -211,13 +223,24 @@ def render_world_map_with_events(events: list[NewsEvent]) -> None:
     
     # Get map style
     map_style = get_map_style()
+    map_style_url = (
+        "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+        if map_style == "dark"
+        else "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+    )
     
     # Get selected event for highlighting
     selected = get_selected_news_event()
     
-    # Build event data for scatter layer
+    # Build event data for scatter layer (skip invalid coordinates)
+    valid_events = []
     event_data = []
     for event in events:
+        if event.latitude is None or event.longitude is None:
+            continue
+        if not (-90 <= event.latitude <= 90 and -180 <= event.longitude <= 180):
+            continue
+        valid_events.append(event)
         color = get_event_color(event.event_type)
         
         # Highlight selected event
@@ -264,10 +287,10 @@ def render_world_map_with_events(events: list[NewsEvent]) -> None:
             zoom=5,
             pitch=0,
         )
-    elif events:
+    elif valid_events:
         # Center on first event
-        avg_lat = sum(e.latitude for e in events) / len(events)
-        avg_lon = sum(e.longitude for e in events) / len(events)
+        avg_lat = sum(e.latitude for e in valid_events) / len(valid_events)
+        avg_lon = sum(e.longitude for e in valid_events) / len(valid_events)
         view_state = pdk.ViewState(
             latitude=avg_lat,
             longitude=avg_lon,
@@ -287,7 +310,7 @@ def render_world_map_with_events(events: list[NewsEvent]) -> None:
     deck = pdk.Deck(
         layers=[scatter_layer],
         initial_view_state=view_state,
-        map_style=map_style,
+        map_style=map_style_url,
         tooltip={
             "html": """
             <b>{title}</b><br/>
@@ -551,6 +574,7 @@ def render_world_map_section() -> None:
                     events, counts = fetch_live_events()
                     if events:
                         set_loaded_events(events, f"Live Feed ({sum(counts.values())} from {len(counts)} sources)")
+                        set_news_filters({})
                         st.session_state.news_last_fetch_time = datetime.now()
             except Exception as e:
                 st.error(f"Auto-refresh failed: {e}")
@@ -620,6 +644,7 @@ def render_world_map_section() -> None:
                 # Step 7: Final results
                 if events:
                     set_loaded_events(events, f"Live Feed ({sum(counts.values())} from {len(counts)} sources)")
+                    set_news_filters({})
                     
                     # Show detailed source breakdown
                     source_info = "\n".join([f"- **{k}**: {v} events" for k, v in counts.items()])
@@ -647,6 +672,14 @@ def render_world_map_section() -> None:
         if st.button("📋 Load Sample Events", key="load_sample_events"):
             sample_events = create_sample_events()
             set_loaded_events(sample_events, "Sample Data")
+            if sample_events:
+                sample_dates = [event.event_date.date() for event in sample_events]
+                set_news_filters(
+                    {
+                        "date_from": min(sample_dates),
+                        "date_to": max(sample_dates),
+                    }
+                )
             st.session_state.news_last_fetch_time = datetime.now()
             st.success(f"✅ Loaded {len(sample_events)} sample events")
             st.rerun()
@@ -662,9 +695,11 @@ def render_world_map_section() -> None:
     render_refresh_timer_display()
     
     st.divider()
+
+    render_world_events_chat_panel(all_events)
     
     # Render filter panel
-    filters = render_news_filter_panel()
+    filters = render_news_filter_panel(all_events)
     
     # Apply filters to events
     filtered_events = apply_filters_to_events(all_events, filters) if all_events else []
@@ -676,6 +711,71 @@ def render_world_map_section() -> None:
     
     # Render the live event collection feed
     render_event_collection_feed(filtered_events)
+
+
+def render_world_events_chat_panel(events: list[NewsEvent]) -> None:
+    """Render the Bedrock chat panel for daily event summaries."""
+    st.markdown("### 🤖 Daily Event Summary")
+    st.caption("Ask for a standardized report of today's key events.")
+
+    if "news_chat_history" not in st.session_state:
+        st.session_state.news_chat_history = []
+    if "news_inference_profile" not in st.session_state:
+        st.session_state.news_inference_profile = None
+    if "news_summary_usage" not in st.session_state:
+        st.session_state.news_summary_usage = None
+
+    profile_options = get_profile_options()
+    if not profile_options:
+        st.info("Inference profiles not configured.")
+        return
+
+    default_profile_id = st.session_state.news_inference_profile
+    if default_profile_id not in profile_options:
+        default_profile_id = next(iter(profile_options.keys()))
+        st.session_state.news_inference_profile = default_profile_id
+
+    selected_profile = st.selectbox(
+        "Inference Profile",
+        options=list(profile_options.keys()),
+        format_func=lambda pid: profile_options[pid],
+        index=list(profile_options.keys()).index(default_profile_id),
+        key="news_inference_profile_select",
+    )
+    st.session_state.news_inference_profile = selected_profile
+
+    usage = st.session_state.get("news_summary_usage")
+    if usage:
+        st.caption(
+            f"Usage: {usage.input_tokens} in / {usage.output_tokens} out · "
+            f"${usage.estimated_cost_usd:.6f} (pricing {usage.pricing_version})"
+        )
+
+    with st.container(height=240):
+        if not st.session_state.news_chat_history:
+            st.info("Try: 'what important events happened so far today?'")
+        for msg in st.session_state.news_chat_history:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+    user_input = st.chat_input("Ask about today's events", key="news_chat_input")
+    if user_input:
+        st.session_state.news_chat_history.append({"role": "user", "content": user_input})
+        if not events:
+            response_text = "No events loaded. Fetch live events first."
+            st.session_state.news_chat_history.append({"role": "assistant", "content": response_text})
+            st.rerun()
+
+        with st.spinner("Summarizing today's events..."):
+            result = summarize_events(
+                events,
+                profile_id=selected_profile,
+                user_query=user_input,
+                chat_history=st.session_state.news_chat_history,
+            )
+        st.session_state.news_summary_usage = result.usage
+        st.session_state.news_chat_history.append({"role": "assistant", "content": result.report})
+        st.rerun()
 
 
 
