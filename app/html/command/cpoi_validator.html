@@ -175,6 +175,12 @@
             const loosePoiCues = /\b(lat|lon|poi|point of interest|range|km|mi)\b/;
             const isCustom = cmdType.hasCustomPoi || loosePoiCues.test(lower);
 
+            if (cmdType.hasTrajectory) {
+                fields.forEach(id => setStatus(id, null, '—'));
+                if (hint) hint.textContent = M.trajectoryRedirect;
+                return;
+            }
+
             if (!isCustom) {
                 fields.forEach(id => setStatus(id, null, '—'));
                 if (hint) hint.textContent = M.customPoiRedirect;

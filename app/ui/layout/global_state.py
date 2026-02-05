@@ -27,6 +27,9 @@ COMMAND_MINIMUM_PENDING_KEY = "command_minimum_pending"
 COMMAND_MULTIPLE_PENDING_KEY = "command_multiple_pending"
 COMMAND_CUSTOM_POI_PENDING_KEY = "command_custom_poi_pending"
 
+# Per-tool visualization render version keys (forces map reset)
+TOOL_VIZ_VERSION_SUFFIX = "_viz_version"
+
 def init_session_state() -> None:
     """
     Initialize all session state variables.
@@ -89,6 +92,7 @@ def _init_tool_states() -> None:
         "reverse_range_ring",
         "minimum_range_ring",
         "custom_poi_range_ring",
+        "launch_trajectory",
     ]
     
     for tool_key in tool_keys:
@@ -308,7 +312,12 @@ def add_tool_output(tool_key: str, output) -> None:
     set_tool_state(tool_key, state)
     
     # Also add to global analytical results
-    add_output_to_results(output)
+    # Only RangeRingOutput objects are supported by AnalyticalResult currently.
+    # LaunchTrajectoryOutput is rendered directly but not added to the analytical stack.
+    try:
+        add_output_to_results(output)
+    except Exception:
+        pass
 
 
 def clear_tool_outputs(tool_key: str) -> None:
@@ -324,6 +333,26 @@ def clear_tool_outputs(tool_key: str) -> None:
     # Clear tool state
     state["outputs"] = []
     set_tool_state(tool_key, state)
+
+
+def get_tool_viz_version(tool_key: str) -> int:
+    """Get the visualization render version for a given tool.
+
+    Streamlit component-based maps (pydeck via components.html) can retain client-side
+    interactive state (zoom/pan). We use a monotonically increasing version counter
+    to force the HTML payload to change, which causes a clean re-render.
+    """
+    key = f"{tool_key}{TOOL_VIZ_VERSION_SUFFIX}"
+    if key not in st.session_state:
+        st.session_state[key] = 0
+    return int(st.session_state[key])
+
+
+def bump_tool_viz_version(tool_key: str) -> int:
+    """Increment and return the visualization render version for a tool."""
+    key = f"{tool_key}{TOOL_VIZ_VERSION_SUFFIX}"
+    st.session_state[key] = get_tool_viz_version(tool_key) + 1
+    return int(st.session_state[key])
 
 
 def toggle_tool_expanded(tool_key: str) -> None:

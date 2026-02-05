@@ -313,6 +313,14 @@
 
             const lower = text.toLowerCase().trim();
 
+            if (lower.includes('trajectory') || lower.includes('flight path') || lower.includes('launch path')) {
+                ['rrr-verb', 'rrr-type', 'rrr-from', 'rrr-country', 'rrr-target', 'rrr-city'].forEach(id => {
+                    setStatus(id, null, '—');
+                });
+                if (hint) hint.textContent = 'This looks like a Launch Trajectory command. See Launch Trajectory tab.';
+                return;
+            }
+
             if (lower.includes('minimum') || lower.includes('min distance') || lower.includes('minimum distance')) {
                 ['rrr-verb', 'rrr-type', 'rrr-from', 'rrr-country', 'rrr-target', 'rrr-city'].forEach(id => {
                     setStatus(id, null, '—');

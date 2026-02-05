@@ -18,6 +18,7 @@ from app.ui.layout.global_state import (
     add_tool_output,
     get_tool_state,
     clear_tool_outputs,
+    bump_tool_viz_version,
 )
 from app.ui.tools.minimum.state import (
     get_min_distance_result,
@@ -143,7 +144,18 @@ def render_minimum_range_ring_tool() -> None:
         
         show_line = st.checkbox("Show minimum distance line", value=True, key="min_show_line")
         
-        if st.button("🚀 Calculate Minimum Distance", key="min_generate"):
+        action_col1, action_col2 = st.columns(2)
+        with action_col1:
+            generate_clicked = st.button("🚀 Calculate Minimum Distance", key="min_generate", use_container_width=True)
+        with action_col2:
+            if st.button("🧹 Clear Visualization", key="min_clear_viz", use_container_width=True):
+                clear_tool_outputs("minimum_range_ring")
+                bump_tool_viz_version("minimum_range_ring")
+                # Also clear computed distance text so the panel truly resets
+                set_min_distance_result(None)
+                st.rerun()
+
+        if generate_clicked:
             if geom_a is not None and geom_b is not None:
                 progress_bar, update_progress = build_progress_callback("Initializing...")
 
@@ -166,6 +178,7 @@ def render_minimum_range_ring_tool() -> None:
                     # Clear previous outputs and add new one
                     clear_tool_outputs("minimum_range_ring")
                     add_tool_output("minimum_range_ring", output)
+                    bump_tool_viz_version("minimum_range_ring")
 
                     # Complete progress and rerun to render from session state
                     progress_bar.progress(1.0, text="100% - Complete!")

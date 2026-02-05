@@ -294,6 +294,14 @@
 
             const lower = text.toLowerCase().trim();
 
+            if (lower.includes('trajectory') || lower.includes('flight path') || lower.includes('launch path')) {
+                ['mrr-verb', 'mrr-type', 'mrr-prep', 'mrr-location-a', 'mrr-target', 'mrr-location-b'].forEach(id => {
+                    setStatus(id, null, '—');
+                });
+                if (hint) hint.textContent = 'This looks like a Launch Trajectory command. See Launch Trajectory tab.';
+                return;
+            }
+
             if (lower.includes('reverse') || lower.includes('launch envelope')) {
                 ['mrr-verb', 'mrr-type', 'mrr-prep', 'mrr-location-a', 'mrr-target', 'mrr-location-b'].forEach(id => {
                     setStatus(id, null, '—');

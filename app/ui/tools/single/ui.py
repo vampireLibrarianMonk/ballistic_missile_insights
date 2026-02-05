@@ -23,6 +23,7 @@ from app.ui.layout.global_state import (
     add_tool_output,
     get_tool_state,
     clear_tool_outputs,
+    bump_tool_viz_version,
 )
 from app.ui.tools.single.state import reset_single_range_ring_state
 from app.ui.tools.shared import (
@@ -116,7 +117,17 @@ def render_single_range_ring_tool() -> None:
                 key="single_resolution",
             )
 
-        if st.button("🚀 Generate Range Ring", key="single_generate"):
+        action_col1, action_col2 = st.columns(2)
+        with action_col1:
+            generate_clicked = st.button("🚀 Generate Range Ring", key="single_generate", use_container_width=True)
+        with action_col2:
+            if st.button("🧹 Clear Visualization", key="single_clear_viz", use_container_width=True):
+                # Clear output + force the embedded map to fully re-render
+                clear_tool_outputs("single_range_ring")
+                bump_tool_viz_version("single_range_ring")
+                st.rerun()
+
+        if generate_clicked:
             progress_bar, update_progress = build_progress_callback("Initializing...")
             try:
                 if origin_type == "country" and country_code:
@@ -157,6 +168,7 @@ def render_single_range_ring_tool() -> None:
                 reset_single_range_ring_state()
                 clear_tool_outputs("single_range_ring")
                 add_tool_output("single_range_ring", output)
+                bump_tool_viz_version("single_range_ring")
                 st.rerun()
 
             except Exception as e:

@@ -22,6 +22,7 @@ from app.ui.layout.global_state import (
     add_tool_output,
     get_tool_state,
     clear_tool_outputs,
+    bump_tool_viz_version,
 )
 from app.ui.tools.reverse.state import (
     get_reverse_available_systems,
@@ -30,6 +31,7 @@ from app.ui.tools.reverse.state import (
     set_reverse_min_distance,
     is_reverse_calculated,
     set_reverse_calculated,
+    reset_reverse_range_ring_state,
 )
 from app.ui.tools.shared import (
     render_output_panel,
@@ -179,6 +181,7 @@ def render_reverse_range_ring_tool() -> None:
                         # Clear previous outputs and add new one
                         clear_tool_outputs("reverse_range_ring")
                         add_tool_output("reverse_range_ring", output)
+                        bump_tool_viz_version("reverse_range_ring")
 
                         # Complete progress and rerun to render from session state
                         progress_bar.progress(1.0, text="100% - Complete!")
@@ -208,6 +211,25 @@ def render_reverse_range_ring_tool() -> None:
                     )
         else:
             st.info("👆 Select a target city and shooter country, then click **Calculate Availability** to see which systems can reach the target.")
+
+        # Utility control for resetting the tool UI + visualization back to the initial state
+        if st.button("🔄 Reset Tool", key="reverse_reset_tool", use_container_width=True):
+            # Clear persisted computation + outputs
+            reset_reverse_range_ring_state()
+            bump_tool_viz_version("reverse_range_ring")
+
+            # Clear Streamlit widget state so selectboxes return to defaults
+            widget_keys = [
+                "reverse_city",
+                "reverse_shooter_country",
+                "reverse_selected_system",
+                "reverse_resolution",
+            ]
+            for k in widget_keys:
+                if k in st.session_state:
+                    del st.session_state[k]
+
+            st.rerun()
 
 
 __all__ = ["render_reverse_range_ring_tool"]

@@ -27,6 +27,11 @@ const ORRG_VALIDATION = {
     validMinimumPreps: ['between', 'from'],
     validMinimumTargets: ['and', 'to'],
     validTargetPreps: ['against', 'to', 'toward', 'towards'],
+
+    // Launch trajectory
+    validTrajectoryTypes: ['launch trajectory', 'trajectory', 'flight path', 'launch path'],
+    validTrajectoryFromPreps: ['from'],
+    validTrajectoryToPreps: ['to', 'toward', 'towards'],
     
     // These are populated by Python at injection time
     validCountries: {{COUNTRIES_JSON}},
@@ -79,7 +84,8 @@ const ORRG_VALIDATION = {
         reverseRedirect: 'This looks like a Reverse Range Ring command. See Reverse Range Ring tab.',
         singleRedirect: 'This looks like a Single Range Ring command. See Single Range Ring tab.',
         minimumRedirect: 'This looks like a Minimum Range Ring command. See Minimum Range Ring tab.',
-        customPoiRedirect: 'This looks like a Custom POI command. See Custom POI tab.'
+        customPoiRedirect: 'This looks like a Custom POI command. See Custom POI tab.',
+        trajectoryRedirect: 'This looks like a Launch Trajectory command. See Launch Trajectory tab.'
     },
     
     // ============================================================
@@ -420,6 +426,106 @@ const ORRG_VALIDATION = {
             distancesStatus
         };
     },
+
+    // ============================================================
+    // Validate Launch Trajectory command (syntactic)
+    // Examples:
+    // - "Show launch trajectory from Pyongyang to Tokyo"
+    // - "Visualize trajectory from Tehran to Tel Aviv"
+    // ============================================================
+    validateTrajectory: function(lower) {
+        const self = this;
+        const verbMatch = self.validVerbs.find(v => lower.startsWith(v))
+            || (lower.startsWith('visualize') ? 'visualize' : null)
+            || (lower.startsWith('plot') ? 'plot' : null);
+
+        const typeMatch = self.validTrajectoryTypes.find(t => lower.includes(t));
+
+        // Expect "from <origin> to <destination>"
+        let fromMatch = null;
+        let toMatch = null;
+        let origin = null;
+        let destination = null;
+
+        if (typeMatch) {
+            const typeEnd = lower.indexOf(typeMatch) + typeMatch.length;
+            const afterType = lower.substring(typeEnd);
+            const fromRegex = /\bfrom\b\s*(.*)/;
+            const fromRegexMatch = afterType.match(fromRegex);
+            if (fromRegexMatch) {
+                fromMatch = 'from';
+                const afterFrom = (fromRegexMatch[1] || '');
+
+                // Progressive: allow just "from ..." without destination yet
+                for (const tp of self.validTrajectoryToPreps) {
+                    const tpWithSpaces = ' ' + tp + ' ';
+                    const tpIdx = afterFrom.indexOf(tpWithSpaces);
+                    const afterFromTrimmed = afterFrom.trimEnd();
+                    const tpAtEnd = ' ' + tp;
+                    const endsWithPrep = afterFromTrimmed.endsWith(tpAtEnd);
+                    const tpEndIdx = endsWithPrep ? afterFromTrimmed.lastIndexOf(tpAtEnd) : -1;
+
+                    if (tpIdx >= 0) {
+                        toMatch = tp;
+                        origin = afterFrom.substring(0, tpIdx).trim();
+                        destination = afterFrom.substring(tpIdx + tp.length + 2).trim().replace(/\.$/, '');
+                        break;
+                    } else if (tpEndIdx >= 0) {
+                        toMatch = tp;
+                        origin = afterFromTrimmed.substring(0, tpEndIdx).trim();
+                        destination = '';
+                        break;
+                    }
+                }
+
+                if (!toMatch && afterFrom.trim()) {
+                    origin = afterFrom.replace(/\.$/, '').trim();
+                }
+            }
+        }
+
+        // Origin/destination can be country or city; we reuse those lists for exact/fuzzy
+        const locationOptions = [...self.validCountries, ...self.validCities];
+        let originStatus = false;
+        let destinationStatus = destination ? false : null;
+        let originMatch = null;
+        let destinationMatch = null;
+
+        if (origin) {
+            const originLower = origin.toLowerCase();
+            if (locationOptions.includes(originLower)) {
+                originStatus = 'exact';
+                originMatch = originLower;
+            } else {
+                originMatch = self.fuzzyMatch(origin, locationOptions);
+                if (originMatch) originStatus = 'fuzzy';
+            }
+        }
+
+        if (destination) {
+            const destLower = destination.toLowerCase();
+            if (locationOptions.includes(destLower)) {
+                destinationStatus = 'exact';
+                destinationMatch = destLower;
+            } else {
+                destinationMatch = self.fuzzyMatch(destination, locationOptions);
+                if (destinationMatch) destinationStatus = 'fuzzy';
+            }
+        }
+
+        const allExact = !!verbMatch && !!typeMatch && !!fromMatch && (originStatus === 'exact') && !!toMatch && (destinationStatus === 'exact');
+        const allValid = !!verbMatch && !!typeMatch && !!fromMatch && !!originMatch && !!toMatch && !!destinationMatch;
+        const hasFuzzy = originStatus === 'fuzzy' || destinationStatus === 'fuzzy';
+        const partialValid = !!typeMatch || !!originMatch || !!destinationMatch;
+
+        return {
+            allExact, allValid, hasFuzzy, partialValid, toolName: 'Launch Trajectory',
+            verbMatch, typeMatch, fromMatch, toMatch,
+            origin, destination,
+            originStatus, destinationStatus,
+            originMatch, destinationMatch
+        };
+    },
     
     // ============================================================
     // Detect command type from input
@@ -430,8 +536,9 @@ const ORRG_VALIDATION = {
         const hasMultiple = lower.includes('multiple');
         const hasSingle = (lower.includes('single') || lower.includes('range ring')) && !hasReverse && !hasMinimum && !hasMultiple;
         const hasCustomPoi = lower.includes('poi') || lower.includes('point of interest') || lower.includes('custom poi');
+        const hasTrajectory = lower.includes('trajectory') || lower.includes('flight path') || lower.includes('launch path');
         const hasVerb = /^(generate|create|build|show|calculate|compute)/i.test(lower);
-        return { hasReverse, hasSingle, hasMinimum, hasMultiple, hasCustomPoi, hasVerb };
+        return { hasReverse, hasSingle, hasMinimum, hasMultiple, hasCustomPoi, hasTrajectory, hasVerb };
     },
 
     // ============================================================

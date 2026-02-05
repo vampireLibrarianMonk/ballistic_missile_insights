@@ -22,6 +22,7 @@ from app.ui.layout.global_state import (
     add_tool_output,
     get_tool_state,
     clear_tool_outputs,
+    bump_tool_viz_version,
 )
 from app.ui.tools.multiple.state import get_multi_ranges, add_multi_range, remove_multi_range
 from app.ui.tools.shared import (
@@ -137,7 +138,16 @@ def render_multiple_range_ring_tool() -> None:
         
         resolution = st.selectbox("Resolution", options=["low", "normal", "high"], index=1, key="multi_resolution")
         
-        if st.button("🚀 Generate Multiple Rings", key="multi_generate"):
+        action_col1, action_col2 = st.columns(2)
+        with action_col1:
+            generate_clicked = st.button("🚀 Generate Multiple Rings", key="multi_generate", use_container_width=True)
+        with action_col2:
+            if st.button("🧹 Clear Visualization", key="multi_clear_viz", use_container_width=True):
+                clear_tool_outputs("multiple_range_ring")
+                bump_tool_viz_version("multiple_range_ring")
+                st.rerun()
+
+        if generate_clicked:
             if not multi_ranges:
                 st.warning("Please add at least one range.")
                 return
@@ -189,6 +199,7 @@ def render_multiple_range_ring_tool() -> None:
                 # Clear previous outputs and add new one
                 clear_tool_outputs("multiple_range_ring")
                 add_tool_output("multiple_range_ring", output)
+                bump_tool_viz_version("multiple_range_ring")
                 st.rerun()  # Rerun to render from session state
 
             except Exception as e:

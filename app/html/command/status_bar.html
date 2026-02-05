@@ -229,6 +229,34 @@
                     statusHint.textContent = M.customPoiRedirect;
                     setExecuteButtonState(false);
                 }
+            } else if (cmdType.hasVerb && cmdType.hasTrajectory) {
+                const result = V.validateTrajectory(lower);
+
+                if (result.allExact) {
+                    statusBar.className = 'cmd-status-bar cmd-status-valid';
+                    statusIcon.textContent = '';
+                    statusText.textContent = M.validatorValid;
+                    statusHint.textContent = '';
+                    setExecuteButtonState(true);
+                } else if (result.allValid) {
+                    statusBar.className = 'cmd-status-bar cmd-status-partial';
+                    statusIcon.textContent = '⚠️';
+                    statusText.textContent = M.validatorFuzzy;
+                    statusHint.textContent = '';
+                    setExecuteButtonState(false);
+                } else if (result.partialValid) {
+                    statusBar.className = 'cmd-status-bar cmd-status-empty';
+                    statusIcon.textContent = '';
+                    statusText.textContent = '⚠️ Format: Show launch trajectory from [Origin] to [Destination]';
+                    statusHint.textContent = M.trajectoryRedirect;
+                    setExecuteButtonState(false);
+                } else {
+                    statusBar.className = 'cmd-status-bar cmd-status-partial';
+                    statusIcon.textContent = '🚀';
+                    statusText.textContent = 'Enter: "Show launch trajectory from [Origin] to [Destination]"';
+                    statusHint.textContent = M.trajectoryRedirect;
+                    setExecuteButtonState(false);
+                }
             } else if (cmdType.hasVerb) {
                 statusBar.className = 'cmd-status-bar cmd-status-partial';
                 statusIcon.textContent = '🔍';

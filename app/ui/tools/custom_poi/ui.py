@@ -18,6 +18,7 @@ from app.ui.layout.global_state import (
     add_tool_output,
     get_tool_state,
     clear_tool_outputs,
+    bump_tool_viz_version,
 )
 from app.ui.tools.custom_poi.state import (
     get_custom_pois,
@@ -30,6 +31,7 @@ from app.ui.tools.custom_poi.state import (
     increment_form_version,
     get_prefill_data,
     set_prefill_data,
+    reset_custom_poi_state,
 )
 from app.ui.tools.shared import (
     render_output_panel,
@@ -248,7 +250,27 @@ def render_custom_poi_tool() -> None:
         st.markdown("**Generation Settings:**")
         resolution = st.selectbox("Resolution", options=["low", "normal", "high"], index=1, key="custom_resolution")
         
-        if st.button("🚀 Generate POI Rings", key="custom_generate"):
+        action_col1, action_col2 = st.columns(2)
+        with action_col1:
+            generate_clicked = st.button("🚀 Generate POI Rings", key="custom_generate", use_container_width=True)
+        with action_col2:
+            if st.button("🔄 Reset Tool", key="custom_reset_tool", use_container_width=True):
+                # Reset persisted POIs + outputs
+                reset_custom_poi_state()
+                bump_tool_viz_version("custom_poi_range_ring")
+
+                # Also clear widget keys so the UI returns to initial defaults
+                widget_keys = [
+                    "custom_poi_radio",
+                    "custom_resolution",
+                ]
+                for k in widget_keys:
+                    if k in st.session_state:
+                        del st.session_state[k]
+
+                st.rerun()
+
+        if generate_clicked:
             if not custom_pois:
                 st.warning("Please add at least one POI.")
                 return
@@ -274,6 +296,7 @@ def render_custom_poi_tool() -> None:
                     
                     clear_tool_outputs("custom_poi_range_ring")
                     add_tool_output("custom_poi_range_ring", output)
+                    bump_tool_viz_version("custom_poi_range_ring")
                     st.rerun()
                     
                 except Exception as e:

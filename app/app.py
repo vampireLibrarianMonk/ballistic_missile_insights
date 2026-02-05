@@ -45,6 +45,34 @@ from app.llm.bedrock_client import get_profile_options
 from app.events.summarization import summarize_events
 
 
+def _reset_news_filter_widget_state() -> None:
+    """Reset Streamlit widget state for the *main* news filter panel.
+
+    The filter widgets in `render_news_filter_panel()` persist their values in
+    `st.session_state` using explicit widget keys.
+
+    When we change the underlying dataset (e.g. Load Sample Events) and/or
+    programmatically call `set_news_filters(...)`, those existing widget values
+    can prevent the UI from reflecting the new defaults.
+
+    To avoid Streamlit warnings about providing both `value=` and session_state,
+    we *only delete* the widget keys here (we do NOT set them).
+    """
+
+    widget_keys = [
+        "news_filter_countries_main",
+        "news_filter_event_types_main",
+        "news_filter_weapon_classes_main",
+        "news_filter_sources_main",
+        "news_filter_date_from",
+        "news_filter_date_to",
+    ]
+
+    for widget_key in widget_keys:
+        if widget_key in st.session_state:
+            del st.session_state[widget_key]
+
+
 def render_news_filter_panel(events: list[NewsEvent]) -> dict:
     """
     Render the news filter panel in an expander.
@@ -132,6 +160,7 @@ def render_news_filter_panel(events: list[NewsEvent]) -> dict:
         # Reset filters button
         if st.button("🔄 Reset Filters", key="news_reset_filters_main"):
             set_news_filters({})
+            _reset_news_filter_widget_state()
             st.rerun()
     
     # Build and return filters
@@ -575,6 +604,7 @@ def render_world_map_section() -> None:
                     if events:
                         set_loaded_events(events, f"Live Feed ({sum(counts.values())} from {len(counts)} sources)")
                         set_news_filters({})
+                        _reset_news_filter_widget_state()
                         st.session_state.news_last_fetch_time = datetime.now()
             except Exception as e:
                 st.error(f"Auto-refresh failed: {e}")
@@ -645,6 +675,7 @@ def render_world_map_section() -> None:
                 if events:
                     set_loaded_events(events, f"Live Feed ({sum(counts.values())} from {len(counts)} sources)")
                     set_news_filters({})
+                    _reset_news_filter_widget_state()
                     
                     # Show detailed source breakdown
                     source_info = "\n".join([f"- **{k}**: {v} events" for k, v in counts.items()])
@@ -680,6 +711,7 @@ def render_world_map_section() -> None:
                         "date_to": max(sample_dates),
                     }
                 )
+                _reset_news_filter_widget_state()
             st.session_state.news_last_fetch_time = datetime.now()
             st.success(f"✅ Loaded {len(sample_events)} sample events")
             st.rerun()

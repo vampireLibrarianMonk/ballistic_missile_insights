@@ -10,7 +10,7 @@ from typing import Optional, Union
 
 import streamlit as st
 
-from app.models.outputs import RangeRingOutput
+from app.models.outputs import RangeRingOutput, LaunchTrajectoryOutput
 from app.rendering.pydeck_adapter import render_range_ring_output
 from app.ui.layout.global_state import (
     get_map_style,
@@ -43,7 +43,7 @@ from app.ui.command import (
 )
 
 
-CommandOutput = Union[RangeRingOutput, str, None]
+CommandOutput = Union[RangeRingOutput, LaunchTrajectoryOutput, str, None]
 
 
 def _render_command_input_status_bar() -> None:
@@ -136,6 +136,37 @@ def _render_product_output_viewer() -> None:
             deck = render_range_ring_output(output, get_map_style())
             render_map_with_legend(deck, output)
             render_js_export_controls(output, "command_output")
+        elif isinstance(output, LaunchTrajectoryOutput):
+            st.subheader(output.title)
+            if output.description:
+                st.markdown(f"*{output.description}*")
+
+            # Render using the same components as the analytical tool
+            from app.ui.tools.launch_trajectory.ui import (
+                render_trajectory_map_with_legend,
+                render_trajectory_export_controls,
+                SENSOR_COLORS,
+            )
+
+            # Ensure sensor colors exist
+            sensors = output.sensors or []
+            for i, sensor in enumerate(sensors):
+                if not sensor.get("color"):
+                    sensor["color"] = SENSOR_COLORS[i % len(SENSOR_COLORS)]
+
+            if output.points:
+                render_trajectory_map_with_legend(output.points, sensors)
+                st.caption(
+                    "⚠️ **Disclaimer:** This visualization is illustrative and analytical only. "
+                    "It does not calculate or infer launch capability."
+                )
+
+            # Export controls depend on tool state; temporarily load into tool session keys
+            # so the export functions can work without refactor.
+            st.session_state.launch_trajectory_points = output.points
+            st.session_state.launch_trajectory_sensors = sensors
+            st.session_state.launch_trajectory_outputs = [{"points": output.points, "sensors": sensors}]
+            render_trajectory_export_controls()
         else:
             st.markdown("### Answer")
             st.markdown(output)

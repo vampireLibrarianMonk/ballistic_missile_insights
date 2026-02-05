@@ -148,6 +148,140 @@
       ]
     },
     {
+      "id": "rwe-prk-nuke-2006",
+      "title": "North Korea conducts its first underground nuclear test",
+      "summary": "North Korea carried out its first underground nuclear weapons test at the Punggye-ri Nuclear Test Site, triggering seismic activity detected by international monitoring agencies.",
+      "event_type": "nuclear_test",
+      "country_code": "PRK",
+      "latitude": 41.306,
+      "longitude": 129.029,
+      "event_date": "2006-10-09T01:35:00Z",
+      "time_precision": "minute",
+      "source": "CTBTO / Reuters",
+      "source_url": "https://www.reuters.com/article/world/north-korea-conducts-nuclear-test-idUSL09273562",
+      "confidence": "high",
+      "weapon_system": "Nuclear device (fission)",
+      "range_km": null,
+      "tags": [
+        "nuclear test",
+        "underground",
+        "Punggye-ri",
+        "DPRK"
+      ]
+    },
+    {
+      "id": "rwe-prk-nuke-2009",
+      "title": "North Korea conducts second underground nuclear test",
+      "summary": "North Korea conducted its second underground nuclear explosion, significantly larger than its 2006 test, confirmed by seismic data.",
+      "event_type": "nuclear_test",
+      "country_code": "PRK",
+      "latitude": 41.306,
+      "longitude": 129.029,
+      "event_date": "2009-05-25T00:54:00Z",
+      "time_precision": "minute",
+      "source": "CTBTO / Reuters",
+      "source_url": "https://www.reuters.com/article/world/north-korea-confirms-second-nuclear-test-idUSTRE54O1ZK",
+      "confidence": "high",
+      "weapon_system": "Nuclear device (fission)",
+      "range_km": null,
+      "tags": [
+        "nuclear test",
+        "underground",
+        "Punggye-ri",
+        "DPRK"
+      ]
+    },
+    {
+      "id": "rwe-prk-nuke-2013",
+      "title": "North Korea conducts third nuclear test",
+      "summary": "North Korea carried out its third underground nuclear test, claiming it used a smaller and more advanced device.",
+      "event_type": "nuclear_test",
+      "country_code": "PRK",
+      "latitude": 41.306,
+      "longitude": 129.029,
+      "event_date": "2013-02-12T02:57:00Z",
+      "time_precision": "minute",
+      "source": "CTBTO / Reuters",
+      "source_url": "https://www.reuters.com/article/world/north-korea-confirms-third-nuclear-test-idUSBRE91B05P",
+      "confidence": "high",
+      "weapon_system": "Nuclear device (advanced fission)",
+      "range_km": null,
+      "tags": [
+        "nuclear test",
+        "underground",
+        "Punggye-ri",
+        "DPRK"
+      ]
+    },
+    {
+      "id": "rwe-prk-nuke-2016-01",
+      "title": "North Korea conducts nuclear test claiming hydrogen bomb",
+      "summary": "North Korea announced it had successfully tested a hydrogen bomb, though analysts assessed it as likely a boosted fission device.",
+      "event_type": "nuclear_test",
+      "country_code": "PRK",
+      "latitude": 41.306,
+      "longitude": 129.029,
+      "event_date": "2016-01-06T01:30:00Z",
+      "time_precision": "minute",
+      "source": "CTBTO / Reuters",
+      "source_url": "https://www.reuters.com/article/world/north-korea-says-it-tested-hydrogen-bomb-idUSKBN0UK0J4",
+      "confidence": "high",
+      "weapon_system": "Nuclear device (claimed thermonuclear)",
+      "range_km": null,
+      "tags": [
+        "nuclear test",
+        "underground",
+        "claimed H-bomb",
+        "Punggye-ri",
+        "DPRK"
+      ]
+    },
+    {
+      "id": "rwe-prk-nuke-2016-09",
+      "title": "North Korea conducts fifth nuclear test",
+      "summary": "North Korea carried out its fifth underground nuclear test, its most powerful at the time, according to seismic measurements.",
+      "event_type": "nuclear_test",
+      "country_code": "PRK",
+      "latitude": 41.306,
+      "longitude": 129.029,
+      "event_date": "2016-09-09T00:30:00Z",
+      "time_precision": "minute",
+      "source": "CTBTO / Reuters",
+      "source_url": "https://www.reuters.com/article/world/north-korea-confirms-fifth-nuclear-test-idUSKCN11F0JX",
+      "confidence": "high",
+      "weapon_system": "Nuclear device (boosted fission)",
+      "range_km": null,
+      "tags": [
+        "nuclear test",
+        "underground",
+        "Punggye-ri",
+        "DPRK"
+      ]
+    },
+    {
+      "id": "rwe-prk-nuke-2017",
+      "title": "North Korea conducts sixth and largest nuclear test",
+      "summary": "North Korea conducted its largest nuclear test to date, widely assessed as a thermonuclear explosion, causing a strong seismic event.",
+      "event_type": "nuclear_test",
+      "country_code": "PRK",
+      "latitude": 41.306,
+      "longitude": 129.029,
+      "event_date": "2017-09-03T03:30:00Z",
+      "time_precision": "minute",
+      "source": "CTBTO / Reuters",
+      "source_url": "https://www.reuters.com/article/world/north-korea-nuclear-test-idUSKCN1BE0L0",
+      "confidence": "high",
+      "weapon_system": "Thermonuclear device",
+      "range_km": null,
+      "tags": [
+        "nuclear test",
+        "thermonuclear",
+        "underground",
+        "Punggye-ri",
+        "DPRK"
+      ]
+    },
+    {
       "id": "rwe-008",
       "title": "IRGC says it launched ballistic missiles at targets in Iraq's Erbil and in Syria",
       "summary": "Iran's Revolutionary Guards said they struck what they called Israel-linked targets in Erbil and also hit Islamic State targets in Syria with missile strikes.",
@@ -635,6 +769,178 @@
         "ballistic missile",
         "Houthis",
         "intercept"
+      ]
+    },
+    {
+      "id": "rwe-031",
+      "title": "China conducts large-scale missile strike drills around Taiwan",
+      "summary": "China's People's Liberation Army conducted missile strike exercises in multiple areas around Taiwan following high-level political tensions.",
+      "event_type": "exercise",
+      "country_code": "CHN",
+      "latitude": 23.8,
+      "longitude": 121.0,
+      "event_date": "2022-08-04T00:00:00Z",
+      "time_precision": "date",
+      "source": "Reuters",
+      "source_url": "https://www.reuters.com/world/asia-pacific/china-fires-missiles-during-drills-around-taiwan-2022-08-04/",
+      "confidence": "high",
+      "weapon_system": "DF-series ballistic missiles (unspecified)",
+      "range_km": null,
+      "tags": [
+        "exercise",
+        "ballistic missiles",
+        "Taiwan Strait",
+        "PLA"
+      ]
+    },
+    {
+      "id": "rwe-032",
+      "title": "China launches ballistic missiles into waters near Taiwan during war games",
+      "summary": "Japan and Taiwan said China fired multiple ballistic missiles into nearby waters as part of major PLA military exercises.",
+      "event_type": "exercise",
+      "country_code": "CHN",
+      "latitude": 24.5,
+      "longitude": 123.0,
+      "event_date": "2022-08-04T00:00:00Z",
+      "time_precision": "date",
+      "source": "AP / Reuters",
+      "source_url": "https://apnews.com/article/china-taiwan-japan-missiles-2a2e2f1b75c38d4a4e4bb3c0a4c4efef",
+      "confidence": "high",
+      "weapon_system": "Ballistic missiles (DF-15 / DF-16 assessed)",
+      "range_km": 1000,
+      "tags": [
+        "exercise",
+        "SRBM",
+        "MRBM",
+        "Taiwan"
+      ]
+    },
+    {
+      "id": "rwe-033",
+      "title": "China conducts DF-17 hypersonic missile exercise",
+      "summary": "China's military said it carried out routine training involving the DF-17 hypersonic missile system to test combat readiness.",
+      "event_type": "exercise",
+      "country_code": "CHN",
+      "latitude": 40.1,
+      "longitude": 94.7,
+      "event_date": "2023-07-19T00:00:00Z",
+      "time_precision": "date",
+      "source": "Reuters",
+      "source_url": "https://www.reuters.com/world/china/china-holds-hypersonic-missile-drills-2023-07-19/",
+      "confidence": "high",
+      "weapon_system": "DF-17 (hypersonic glide vehicle)",
+      "range_km": 1800,
+      "tags": [
+        "exercise",
+        "hypersonic",
+        "DF-17",
+        "PLA Rocket Force"
+      ]
+    },
+    {
+      "id": "rwe-034",
+      "title": "PLA Rocket Force conducts multi-missile launch exercise",
+      "summary": "Chinese state media reported a Rocket Force exercise involving coordinated launches of multiple missile types to test rapid strike capability.",
+      "event_type": "exercise",
+      "country_code": "CHN",
+      "latitude": 38.0,
+      "longitude": 106.0,
+      "event_date": "2023-11-02T00:00:00Z",
+      "time_precision": "date",
+      "source": "Xinhua / Reuters",
+      "source_url": "https://www.reuters.com/world/china/chinas-rocket-force-holds-missile-drills-2023-11-02/",
+      "confidence": "high",
+      "weapon_system": "DF-series ballistic missiles (mixed)",
+      "range_km": null,
+      "tags": [
+        "exercise",
+        "PLA Rocket Force",
+        "salvo launch"
+      ]
+    },
+    {
+      "id": "rwe-035",
+      "title": "China conducts joint firepower exercise involving missile strikes near Taiwan",
+      "summary": "The PLA said it carried out joint firepower exercises including missile forces as part of drills simulating precision strikes around Taiwan.",
+      "event_type": "exercise",
+      "country_code": "CHN",
+      "latitude": 23.5,
+      "longitude": 120.9,
+      "event_date": "2024-05-23T00:00:00Z",
+      "time_precision": "date",
+      "source": "Reuters",
+      "source_url": "https://www.reuters.com/world/asia-pacific/china-holds-war-games-around-taiwan-2024-05-23/",
+      "confidence": "high",
+      "weapon_system": "Ballistic and cruise missiles (PLA assessment)",
+      "range_km": null,
+      "tags": [
+        "exercise",
+        "joint firepower",
+        "Taiwan Strait"
+      ]
+    },
+    {
+      "id": "rwe-036",
+      "title": "China tests DF-26 intermediate-range ballistic missile in training launch",
+      "summary": "China conducted a training launch of the DF-26 intermediate-range ballistic missile, capable of both conventional and nuclear payloads.",
+      "event_type": "exercise",
+      "country_code": "CHN",
+      "latitude": 39.0,
+      "longitude": 100.3,
+      "event_date": "2022-04-18T00:00:00Z",
+      "time_precision": "date",
+      "source": "Reuters",
+      "source_url": "https://www.reuters.com/world/china/china-test-fires-df-26-missile-2022-04-18/",
+      "confidence": "high",
+      "weapon_system": "DF-26",
+      "range_km": 4000,
+      "tags": [
+        "exercise",
+        "IRBM",
+        "DF-26",
+        "dual-capable"
+      ]
+    },
+    {
+      "id": "rwe-037",
+      "title": "PLA conducts missile strike drills in South China Sea",
+      "summary": "China's military held missile strike exercises in the South China Sea, according to state media and regional defense officials.",
+      "event_type": "exercise",
+      "country_code": "CHN",
+      "latitude": 16.5,
+      "longitude": 112.3,
+      "event_date": "2023-03-26T00:00:00Z",
+      "time_precision": "date",
+      "source": "AP / Reuters",
+      "source_url": "https://www.reuters.com/world/asia-pacific/china-holds-missile-drills-south-china-sea-2023-03-26/",
+      "confidence": "high",
+      "weapon_system": "Anti-ship ballistic missiles (assessed DF-21D)",
+      "range_km": 1500,
+      "tags": [
+        "exercise",
+        "ASBM",
+        "South China Sea"
+      ]
+    },
+    {
+      "id": "rwe-038",
+      "title": "China holds Rocket Force readiness drills with rapid missile deployment",
+      "summary": "PLA Rocket Force units carried out readiness drills focused on rapid missile deployment and simulated launches.",
+      "event_type": "exercise",
+      "country_code": "CHN",
+      "latitude": 36.0,
+      "longitude": 103.0,
+      "event_date": "2024-01-07T00:00:00Z",
+      "time_precision": "date",
+      "source": "Xinhua",
+      "source_url": "https://english.news.cn/20240107/rocket-force-drill.html",
+      "confidence": "medium",
+      "weapon_system": "DF-series ballistic missiles",
+      "range_km": null,
+      "tags": [
+        "exercise",
+        "readiness drill",
+        "PLA Rocket Force"
       ]
     }
   ]

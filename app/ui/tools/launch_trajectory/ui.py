@@ -1573,12 +1573,14 @@ def render_launch_trajectory_tool() -> None:
     following the same visual language and interaction patterns.
     """
     init_launch_trajectory_state()
-    
+
     # Track if data has been loaded
     if "launch_trajectory_data_loaded" not in st.session_state:
         st.session_state.launch_trajectory_data_loaded = False
     if "launch_trajectory_file_metadata" not in st.session_state:
         st.session_state.launch_trajectory_file_metadata = {}
+    if "launch_trajectory_viz_version" not in st.session_state:
+        st.session_state.launch_trajectory_viz_version = 0
     
     with st.expander("🚀 Launch Trajectory Visualization", expanded=False):
         st.markdown("""
@@ -1864,13 +1866,19 @@ def render_launch_trajectory_tool() -> None:
             st.divider()
         
         # =================================================================
-        # Generate Visualization Button
+        # Generate Visualization + Clear controls
         # =================================================================
-        btn_col1, btn_col2 = st.columns(2)
-        
+        btn_col1, btn_col2, btn_col3 = st.columns(3)
+
         with btn_col1:
             generate_disabled = not bool(points)
-            if st.button("🚀 Generate Visualization", key="traj_generate", type="primary", use_container_width=True, disabled=generate_disabled):
+            if st.button(
+                "🚀 Generate Visualization",
+                key="traj_generate",
+                type="primary",
+                use_container_width=True,
+                disabled=generate_disabled,
+            ):
                 # Validate for mode
                 is_valid, errors = validate_trajectory_for_mode(current_mode)
                 
@@ -1895,12 +1903,17 @@ def render_launch_trajectory_tool() -> None:
                             }
                         }
                         add_trajectory_output(output_data)
-        
+
         with btn_col2:
+            if st.button("🧹 Clear Visualization", key="traj_clear_viz", use_container_width=True):
+                # Preserve loaded points/sensors, but clear the rendered outputs and force a re-render.
+                clear_trajectory_outputs()
+                st.session_state.launch_trajectory_viz_version += 1
+                st.rerun()
+
+        with btn_col3:
             if st.button("🗑️ Clear All", key="traj_clear", use_container_width=True):
                 clear_trajectory_state()
-                st.session_state.launch_trajectory_data_loaded = False
-                st.session_state.launch_trajectory_file_metadata = {}
                 st.success("Trajectory data cleared")
                 st.rerun()
         
@@ -1921,7 +1934,13 @@ def render_launch_trajectory_tool() -> None:
             
             # Render with pydeck for color support (legend is integrated in the map)
             if output_points:
-                render_trajectory_map_with_legend(output_points, output_sensors)
+                # Force a full re-render when the viz version changes.
+                # (components.html may otherwise retain client-side state)
+                render_trajectory_map_with_legend(
+                    output_points,
+                    output_sensors,
+                    height=500 + (int(st.session_state.launch_trajectory_viz_version) % 2),
+                )
                 
                 # Attribution notice
                 st.caption("⚠️ **Disclaimer:** This visualization is illustrative and analytical only. It does not calculate or infer launch capability.")

@@ -10,7 +10,7 @@ from __future__ import annotations
 import streamlit as st
 from typing import Optional
 
-from app.ui.layout.global_state import is_analyst_mode
+from app.ui.layout.global_state import is_analyst_mode, get_tool_viz_version
 from app.rendering.pydeck_adapter import render_range_ring_output
 from app.models.outputs import GeometryType
 
@@ -422,7 +422,11 @@ def render_output_panel(
         st.markdown(f"*{output.description}*")
 
     deck = render_range_ring_output(output, map_style)
-    render_map_with_legend(deck, output)
+    # Include a per-tool viz version to force a hard re-render when requested.
+    # This helps implement "Reset visualization" behavior even when client-side
+    # state (zoom/pan) is retained by the embedded component.
+    viz_version = get_tool_viz_version(tool_key)
+    render_map_with_legend(deck, output, height=500 + (viz_version % 2))
 
     if show_metadata and is_analyst_mode():
         metadata = {

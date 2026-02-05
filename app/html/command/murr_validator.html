@@ -284,6 +284,13 @@
 
             const lower = text.toLowerCase().trim();
 
+            if (lower.includes('trajectory') || lower.includes('flight path') || lower.includes('launch path')) {
+                ['murr-verb', 'murr-type', 'murr-from', 'murr-country', 'murr-at', 'murr-distances', 'murr-unit', 'murr-missiles']
+                    .forEach(id => setStatus(id, null, '—'));
+                if (hint) hint.textContent = 'This looks like a Launch Trajectory command. See Launch Trajectory tab.';
+                return;
+            }
+
             if (lower.includes('minimum') || lower.includes('min distance') || lower.includes('minimum distance')) {
                 ['murr-verb', 'murr-type', 'murr-from', 'murr-country', 'murr-at', 'murr-distances', 'murr-unit', 'murr-missiles']
                     .forEach(id => setStatus(id, null, '—'));
