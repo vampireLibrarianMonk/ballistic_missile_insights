@@ -100,6 +100,18 @@
             const lower = trimmed.toLowerCase();
             const cmdType = V.detectCommandType(lower);
 
+            // World Events progressive validator is rendered in Help → World Events tab,
+            // not in the status bar. Here we only provide a lightweight hint.
+            if (cmdType.hasWorldEvents) {
+                statusBar.className = 'cmd-status-bar cmd-status-partial';
+                statusIcon.textContent = '🌍';
+                statusText.textContent = 'World Events command detected.';
+                statusHint.textContent = M.seeHelp('World Events');
+                // Let backend parser decide; still require user to press Execute.
+                setExecuteButtonState(true);
+                return;
+            }
+
             if (cmdType.hasVerb && cmdType.hasReverse) {
                 // Validate as Reverse Range Ring using shared validator
                 const result = V.validateReverse(lower);

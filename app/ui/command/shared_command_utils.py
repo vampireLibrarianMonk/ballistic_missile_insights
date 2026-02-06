@@ -88,14 +88,17 @@ def get_shared_validation_js() -> str:
     js_template = _load_validation_js_template()
     data_service = get_data_service()
     countries = data_service.get_country_list()
+    country_codes = data_service.get_country_codes()
     cities = data_service.get_city_list()
 
     countries_json = json.dumps([c.lower() for c in countries])
+    country_codes_json = json.dumps([c.lower() for c in country_codes])
     cities_json = json.dumps([c.lower() for c in cities])
     countries_display_json = json.dumps(sorted(countries))
     cities_display_json = json.dumps(sorted(cities))
 
     js_code = js_template.replace("{{COUNTRIES_JSON}}", countries_json)
+    js_code = js_code.replace("{{COUNTRY_CODES_JSON}}", country_codes_json)
     js_code = js_code.replace("{{CITIES_JSON}}", cities_json)
     js_code = js_code.replace("{{COUNTRIES_DISPLAY_JSON}}", countries_display_json)
     js_code = js_code.replace("{{CITIES_DISPLAY_JSON}}", cities_display_json)

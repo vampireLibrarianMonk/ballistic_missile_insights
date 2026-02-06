@@ -41,8 +41,7 @@ from app.ui.news.news_feed import (
     create_sample_events, is_analyst_mode,
 )
 from app.ui.news.world_map import get_event_color
-from app.llm.bedrock_client import get_profile_options
-from app.events.summarization import summarize_events
+
 
 
 def _reset_news_filter_widget_state() -> None:
@@ -728,7 +727,7 @@ def render_world_map_section() -> None:
     
     st.divider()
 
-    render_world_events_chat_panel(all_events)
+    # NOTE: World Events chat/search workflow has been moved into the Command Center.
     
     # Render filter panel
     filters = render_news_filter_panel(all_events)
@@ -743,74 +742,6 @@ def render_world_map_section() -> None:
     
     # Render the live event collection feed
     render_event_collection_feed(filtered_events)
-
-
-def render_world_events_chat_panel(events: list[NewsEvent]) -> None:
-    """Render the Bedrock chat panel for daily event summaries."""
-    st.markdown("### 🤖 Daily Event Summary")
-    st.caption("Ask for a standardized report of today's key events.")
-
-    if "news_chat_history" not in st.session_state:
-        st.session_state.news_chat_history = []
-    if "news_inference_profile" not in st.session_state:
-        st.session_state.news_inference_profile = None
-    if "news_summary_usage" not in st.session_state:
-        st.session_state.news_summary_usage = None
-
-    profile_options = get_profile_options()
-    if not profile_options:
-        st.info("Inference profiles not configured.")
-        return
-
-    default_profile_id = st.session_state.news_inference_profile
-    if default_profile_id not in profile_options:
-        default_profile_id = next(iter(profile_options.keys()))
-        st.session_state.news_inference_profile = default_profile_id
-
-    selected_profile = st.selectbox(
-        "Inference Profile",
-        options=list(profile_options.keys()),
-        format_func=lambda pid: profile_options[pid],
-        index=list(profile_options.keys()).index(default_profile_id),
-        key="news_inference_profile_select",
-    )
-    st.session_state.news_inference_profile = selected_profile
-
-    usage = st.session_state.get("news_summary_usage")
-    if usage:
-        st.caption(
-            f"Usage: {usage.input_tokens} in / {usage.output_tokens} out · "
-            f"${usage.estimated_cost_usd:.6f} (pricing {usage.pricing_version})"
-        )
-
-    with st.container(height=240):
-        if not st.session_state.news_chat_history:
-            st.info("Try: 'what important events happened so far today?'")
-        for msg in st.session_state.news_chat_history:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
-
-    user_input = st.chat_input("Ask about today's events", key="news_chat_input")
-    if user_input:
-        st.session_state.news_chat_history.append({"role": "user", "content": user_input})
-        if not events:
-            response_text = "No events loaded. Fetch live events first."
-            st.session_state.news_chat_history.append({"role": "assistant", "content": response_text})
-            st.rerun()
-
-        with st.spinner("Summarizing today's events..."):
-            result = summarize_events(
-                events,
-                profile_id=selected_profile,
-                user_query=user_input,
-                chat_history=st.session_state.news_chat_history,
-            )
-        st.session_state.news_summary_usage = result.usage
-        st.session_state.news_chat_history.append({"role": "assistant", "content": result.report})
-        st.rerun()
-
-
-
 
 def main() -> None:
     """Main application entry point."""

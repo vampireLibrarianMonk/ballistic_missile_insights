@@ -32,12 +32,73 @@ const ORRG_VALIDATION = {
     validTrajectoryTypes: ['launch trajectory', 'trajectory', 'flight path', 'launch path'],
     validTrajectoryFromPreps: ['from'],
     validTrajectoryToPreps: ['to', 'toward', 'towards'],
+
+    // World Events (2-step workflow)
+    validWorldEventsPrefix: 'show me events over the last',
+    // Accept singular or plural
+    validWorldEventsUnits: ['hour', 'hours', 'day', 'days', 'week', 'weeks', 'month', 'months', 'year', 'years'],
+    validWorldEventsDomains: ['missile', 'nuclear'],
+    validWorldEventsActivities: ['tests', 'exercises', 'combat activity', 'deployment'],
+    validWorldEventsDatasets: ['live', 'sample', 'current'],
     
     // These are populated by Python at injection time
     validCountries: {{COUNTRIES_JSON}},
+    validCountryCodes: {{COUNTRY_CODES_JSON}},
     validCities: {{CITIES_JSON}},
     countriesDisplay: {{COUNTRIES_DISPLAY_JSON}},
     citiesDisplay: {{CITIES_DISPLAY_JSON}},
+
+    // Common aliases (should roughly mirror Python-side parsing)
+    worldEventsCountryAliases: {
+        'north korea': 'korea, north',
+        'south korea': 'korea, south',
+        'united states': 'united states of america',
+        'usa': 'united states of america',
+        'uk': 'united kingdom',
+        'russia': 'russian federation',
+    },
+
+    // Lightweight edit-distance for World Events country fuzzy matching
+    // (used only when input is long enough to be a plausible typo rather than an abbreviation)
+    levenshteinDistance: function(a, b) {
+        if (a === b) return 0;
+        if (!a) return b.length;
+        if (!b) return a.length;
+        const m = a.length;
+        const n = b.length;
+        const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+        for (let i = 0; i <= m; i++) dp[i][0] = i;
+        for (let j = 0; j <= n; j++) dp[0][j] = j;
+        for (let i = 1; i <= m; i++) {
+            for (let j = 1; j <= n; j++) {
+                const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+                dp[i][j] = Math.min(
+                    dp[i - 1][j] + 1,
+                    dp[i][j - 1] + 1,
+                    dp[i - 1][j - 1] + cost
+                );
+            }
+        }
+        return dp[m][n];
+    },
+
+    // Return true if input is a plausible typo for a real country name.
+    // We intentionally DO NOT accept short prefixes like "Chin" for "China".
+    isPlausibleCountryTypo: function(input, validCountriesLower) {
+        if (!input) return false;
+        const s = input.toLowerCase().trim();
+        // Require length >= 5 to avoid accepting abbreviations.
+        if (s.length < 5) return false;
+        let best = Infinity;
+        for (const opt of validCountriesLower) {
+            // Quick guard: first letter should match to reduce false positives.
+            if (!opt || opt[0] !== s[0]) continue;
+            const d = this.levenshteinDistance(s, opt);
+            if (d < best) best = d;
+            if (best === 1) break;
+        }
+        return best <= 2;
+    },
     
     // ============================================================
     // Shared status messages (used by status bar and validators)
@@ -69,6 +130,9 @@ const ORRG_VALIDATION = {
         singleFormat: 'Format: Generate a single range ring from [Country]',
         minimumFormat: 'Format: Calculate minimum distance between [Location A] and [Location B]',
         multipleFormat: 'Format: Generate multiple range rings from [Country] at [distances] [unit]. The respective missile names are [names].',
+
+        // World Events
+        worldEventsFormat: 'Format: Show me events over the last [#] [hour(s)|day(s)|week(s)|month(s)|year(s)] for [country name or ISO3] concerning [missile|nuclear] [tests|exercises|combat activity|deployment].',
         
         // Unrecognized/query states
         unrecognized: 'Command pattern not recognized',
@@ -86,6 +150,110 @@ const ORRG_VALIDATION = {
         minimumRedirect: 'This looks like a Minimum Range Ring command. See Minimum Range Ring tab.',
         customPoiRedirect: 'This looks like a Custom POI command. See Custom POI tab.',
         trajectoryRedirect: 'This looks like a Launch Trajectory command. See Launch Trajectory tab.'
+    },
+
+    // ============================================================
+    // Validate World Events search command (progressive)
+    // ============================================================
+    validateWorldEvents: function(lower) {
+        const self = this;
+
+        // Progressive check markers
+        const checks = {
+            prefix: false,
+            qty: false,
+            unit: false,
+            forKw: false,
+            country: false,
+            concerningKw: false,
+            domain: false,
+            activity: false,
+            dataset: null,
+        };
+
+        const normalized = (lower || '').trim();
+        checks.prefix = normalized.startsWith(self.validWorldEventsPrefix);
+        checks.forKw = normalized.includes(' for ');
+        checks.concerningKw = normalized.includes(' concerning ');
+        // dataset hint is optional and not required
+
+        // Pull quantity
+        const qtyMatch = normalized.match(/show me events over the last\s+(\d+)/);
+        if (qtyMatch) {
+            const qty = parseInt(qtyMatch[1], 10);
+            checks.qty = !isNaN(qty) && qty > 0;
+        }
+
+        // Pull unit
+        const unitMatch = normalized.match(/show me events over the last\s+(?:\d+\s+)?(hour|hours|day|days|week|weeks|month|months|year|years)\b/);
+        if (unitMatch) {
+            const unit = unitMatch[1];
+            checks.unit = self.validWorldEventsUnits.includes(unit);
+        }
+
+        // If the user didn't provide a number, assume quantity=1 when a unit is present.
+        // Example: "over the last day".
+        if (!checks.qty && checks.unit) {
+            checks.qty = true;
+        }
+
+        // Pull country (ISO3 or name)
+        // Prefer parsing between "for" and "concerning" so multi-word names work.
+        let countryToken = null;
+        const betweenMatch = normalized.match(/\bfor\s+(.+?)\s+concerning\b/);
+        if (betweenMatch) {
+            countryToken = (betweenMatch[1] || '').trim().replace(/\.$/, '');
+        } else {
+            const fallbackMatch = normalized.match(/\bfor\s+([^\s.]+)\b/);
+            if (fallbackMatch) countryToken = (fallbackMatch[1] || '').trim().replace(/\.$/, '');
+        }
+
+        if (countryToken) {
+            // Apply alias mapping first
+            const alias = self.worldEventsCountryAliases[countryToken.toLowerCase()];
+            if (alias) countryToken = alias;
+
+            // ISO3
+            if (/^[a-z]{3}$/.test(countryToken)) {
+                checks.country = self.validCountryCodes.includes(countryToken);
+            } else {
+                // Country name (exact; allow fuzzy ONLY for plausible typos)
+                const exact = self.validCountries.includes(countryToken.toLowerCase());
+                if (exact) {
+                    checks.country = true;
+                } else {
+                    checks.country = self.isPlausibleCountryTypo(countryToken, self.validCountries);
+                }
+            }
+        }
+
+        // Pull domain and activity
+        const domainMatch = normalized.match(/\bconcerning\s+(missile|nuclear)\b/);
+        if (domainMatch) {
+            checks.domain = self.validWorldEventsDomains.includes(domainMatch[1]);
+        }
+
+        const activityMatch = normalized.match(/\b(missile|nuclear)\s+(tests|exercises|combat activity|deployment)\b/);
+        if (activityMatch) {
+            const activity = activityMatch[2];
+            checks.activity = self.validWorldEventsActivities.includes(activity);
+        }
+
+        const datasetMatch = normalized.match(/\bfrom\s+(live|sample|current)\s+events?\b/);
+        if (datasetMatch) {
+            const ds = datasetMatch[1];
+            checks.dataset = self.validWorldEventsDatasets.includes(ds) ? 'exact' : false;
+        }
+
+        const allExact = checks.prefix && checks.qty && checks.unit && checks.forKw && checks.country && checks.concerningKw && checks.domain && checks.activity;
+        const partialValid = checks.prefix || checks.forKw || checks.concerningKw;
+
+        return {
+            toolName: 'World Events',
+            checks,
+            allExact,
+            partialValid,
+        };
     },
     
     // ============================================================
@@ -537,8 +705,11 @@ const ORRG_VALIDATION = {
         const hasSingle = (lower.includes('single') || lower.includes('range ring')) && !hasReverse && !hasMinimum && !hasMultiple;
         const hasCustomPoi = lower.includes('poi') || lower.includes('point of interest') || lower.includes('custom poi');
         const hasTrajectory = lower.includes('trajectory') || lower.includes('flight path') || lower.includes('launch path');
+        const hasWorldEvents = lower.startsWith('show me events over the last')
+            || lower.includes('daily event summary')
+            || lower.includes('daily intel report');
         const hasVerb = /^(generate|create|build|show|calculate|compute)/i.test(lower);
-        return { hasReverse, hasSingle, hasMinimum, hasMultiple, hasCustomPoi, hasTrajectory, hasVerb };
+        return { hasReverse, hasSingle, hasMinimum, hasMultiple, hasCustomPoi, hasTrajectory, hasWorldEvents, hasVerb };
     },
 
     // ============================================================

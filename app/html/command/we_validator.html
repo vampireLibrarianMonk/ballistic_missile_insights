@@ -1,0 +1,208 @@
+<style>
+    .we-validator {
+        font-family: "Source Sans Pro", sans-serif;
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 12px;
+        margin: 10px 0;
+    }
+    .we-validator-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 8px;
+    }
+    .we-section {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 13px;
+    }
+    .we-icon {
+        width: 18px;
+        height: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+    }
+    .we-valid { color: #28a745; }
+    .we-invalid { color: #dc3545; }
+    .we-warning { color: #ffc107; }
+    .we-pending { color: #6c757d; }
+    .we-label {
+        color: #555;
+        min-width: 140px;
+    }
+    .we-value {
+        color: #333;
+        font-weight: 500;
+    }
+    .we-hint {
+        font-size: 11px;
+        color: #888;
+        font-style: italic;
+        margin-top: 8px;
+    }
+</style>
+
+<div class="we-validator" id="we-validator-widget">
+    <div class="we-validator-title">📋 Query Validator</div>
+    <div class="we-section" id="we-prefix">
+        <span class="we-icon we-pending" id="we-prefix-icon">○</span>
+        <span class="we-label">Prefix:</span>
+        <span class="we-value" id="we-prefix-value">—</span>
+    </div>
+    <div class="we-section" id="we-qty">
+        <span class="we-icon we-pending" id="we-qty-icon">○</span>
+        <span class="we-label">Time quantity:</span>
+        <span class="we-value" id="we-qty-value">—</span>
+    </div>
+    <div class="we-section" id="we-unit">
+        <span class="we-icon we-pending" id="we-unit-icon">○</span>
+        <span class="we-label">Time unit:</span>
+        <span class="we-value" id="we-unit-value">—</span>
+    </div>
+    <div class="we-section" id="we-country">
+        <span class="we-icon we-pending" id="we-country-icon">○</span>
+        <span class="we-label">Country (ISO3):</span>
+        <span class="we-value" id="we-country-value">—</span>
+    </div>
+    <div class="we-section" id="we-domain">
+        <span class="we-icon we-pending" id="we-domain-icon">○</span>
+        <span class="we-label">Domain:</span>
+        <span class="we-value" id="we-domain-value">—</span>
+    </div>
+    <div class="we-section" id="we-activity">
+        <span class="we-icon we-pending" id="we-activity-icon">○</span>
+        <span class="we-label">Activity:</span>
+        <span class="we-value" id="we-activity-value">—</span>
+    </div>
+    <div class="we-section" id="we-dataset">
+        <span class="we-icon we-pending" id="we-dataset-icon">○</span>
+        <span class="we-label">Dataset (optional):</span>
+        <span class="we-value" id="we-dataset-value">—</span>
+    </div>
+    <!-- trailing-period requirement removed -->
+    <div class="we-hint" id="we-hint">Type your command above to see validation...</div>
+</div>
+
+<script>
+    (function() {
+        // Include shared validation code (ORRG_VALIDATION)
+        {{SHARED_JS}}
+
+        const V = ORRG_VALIDATION;
+
+        function setStatus(id, valid, value) {
+            const icon = document.getElementById(id + '-icon');
+            const valueEl = document.getElementById(id + '-value');
+            if (!icon || !valueEl) return;
+
+            if (valid === 'exact') {
+                icon.textContent = '✓';
+                icon.className = 'we-icon we-valid';
+            } else if (valid === 'fuzzy') {
+                icon.textContent = '⚠';
+                icon.className = 'we-icon we-warning';
+            } else if (valid === false) {
+                icon.textContent = '✗';
+                icon.className = 'we-icon we-invalid';
+            } else {
+                icon.textContent = '○';
+                icon.className = 'we-icon we-pending';
+            }
+
+            valueEl.textContent = value || '—';
+        }
+
+        function parseAndValidate(text) {
+            const hint = document.getElementById('we-hint');
+            if (!text || text.trim().length < 3) {
+                ['we-prefix', 'we-qty', 'we-unit', 'we-country', 'we-domain', 'we-activity', 'we-dataset'].forEach(id => {
+                    setStatus(id, null, '—');
+                });
+                if (hint) hint.textContent = 'Type your command above to see validation...';
+                return;
+            }
+
+            const lower = text.toLowerCase().trim();
+            const result = V.validateWorldEvents(lower);
+            const c = result.checks;
+
+            setStatus('we-prefix', c.prefix ? 'exact' : false, 'Show me events over the last');
+
+            const qtyMatch = lower.match(/show me events over the last\s+(\d+)/);
+            const qtyVal = qtyMatch ? qtyMatch[1] : '';
+            // If no # is provided but unit exists, assume implicit quantity=1
+            const qtyDisplay = qtyVal ? qtyVal : (c.unit ? '1 (implicit)' : '');
+            setStatus('we-qty', c.qty ? 'exact' : (qtyVal ? false : null), qtyDisplay);
+
+            const unitMatch = lower.match(/show me events over the last\s+(?:\d+\s+)?(hour|hours|day|days|week|weeks|month|months|year|years)\b/);
+            const unitVal = unitMatch ? unitMatch[1] : '';
+            setStatus('we-unit', c.unit ? 'exact' : (unitVal ? false : null), unitVal);
+
+            // Country can be ISO3 or full name; show whatever user typed between "for" and "concerning".
+            const countryBetween = lower.match(/\bfor\s+(.+?)\s+concerning\b/);
+            let countryVal = '';
+            if (countryBetween) {
+                countryVal = (countryBetween[1] || '').trim();
+            } else {
+                const countryIso3 = lower.match(/\bfor\s+([a-z]{3})\b/);
+                countryVal = countryIso3 ? (countryIso3[1] || '').trim() : '';
+            }
+            const displayCountry = countryVal ? (countryVal.length === 3 ? countryVal.toUpperCase() : countryVal) : '';
+            setStatus('we-country', c.country ? 'exact' : (displayCountry ? false : null), displayCountry);
+
+            const domainMatch = lower.match(/\bconcerning\s+(missile|nuclear)\b/);
+            const domainVal = domainMatch ? domainMatch[1] : '';
+            setStatus('we-domain', c.domain ? 'exact' : (domainVal ? false : null), domainVal);
+
+            const activityMatch = lower.match(/\b(missile|nuclear)\s+(tests|exercises|combat activity|deployment)\b/);
+            const activityVal = activityMatch ? activityMatch[2] : '';
+            setStatus('we-activity', c.activity ? 'exact' : (activityVal ? false : null), activityVal);
+
+            const datasetMatch = lower.match(/\bfrom\s+(live|sample|current)\s+events?\b/);
+            const datasetVal = datasetMatch ? datasetMatch[1] : '';
+            // Optional: show pending when not present
+            if (!datasetVal) {
+                setStatus('we-dataset', null, '—');
+            } else {
+                setStatus('we-dataset', c.dataset === 'exact' ? 'exact' : false, datasetVal);
+            }
+
+            if (result.allExact) {
+                if (hint) hint.textContent = '✅ Query looks valid! Click Execute to proceed.';
+            } else if (result.partialValid) {
+                if (hint) hint.textContent = '⚠️ Continue typing until all fields are checked.';
+            } else {
+                if (hint) hint.textContent = V.messages.worldEventsFormat;
+            }
+        }
+
+        function attachListener() {
+            const textareas = window.parent.document.querySelectorAll('textarea');
+            for (const ta of textareas) {
+                if (ta.placeholder && ta.placeholder.includes('Type a question')) {
+                    ta.addEventListener('input', function(e) {
+                        parseAndValidate(e.target.value);
+                    });
+                    parseAndValidate(ta.value);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        let attempts = 0;
+        const maxAttempts = 20;
+        const tryAttach = setInterval(function() {
+            attempts++;
+            if (attachListener() || attempts >= maxAttempts) {
+                clearInterval(tryAttach);
+            }
+        }, 200);
+    })();
+</script>

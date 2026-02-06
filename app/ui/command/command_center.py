@@ -24,6 +24,7 @@ from app.ui.layout.global_state import (
     get_command_minimum_pending,
     get_command_multiple_pending,
     get_command_custom_poi_pending,
+    get_command_world_events_pending,
 )
 from app.ui.tools.tool_components import render_map_with_legend
 from app.ui.command.shared_command_utils import (
@@ -41,6 +42,7 @@ from app.ui.command import (
     custom_poi_command,
     trajectory_command,
 )
+from app.ui.command import world_events_command
 
 
 CommandOutput = Union[RangeRingOutput, LaunchTrajectoryOutput, str, None]
@@ -88,6 +90,7 @@ def _render_input_panel() -> Optional[str]:
         single_command.render_pending_panel,
         minimum_command.render_pending_panel,
         custom_poi_command.render_pending_panel,
+        world_events_command.render_pending_panel,
     ):
         result = pending_panel()
         if result is not None:
@@ -110,6 +113,8 @@ def _render_input_panel() -> Optional[str]:
         executed = st.form_submit_button("⚙️ Execute Command", use_container_width=True)
 
     if executed and query_text and query_text.strip():
+        # After the user executes a query, collapse Help so the main workflow stays focused.
+        st.session_state["command_help_expanded"] = False
         return query_text.strip()
 
     if executed:
@@ -179,13 +184,18 @@ def _render_product_output_viewer() -> None:
 
 def _render_help_section() -> None:
     """Render the Command Center help section with tabbed tool help."""
-    with st.expander("❓ Help", expanded=False):
-        tab_rrr, tab_single, tab_multi, tab_min, tab_poi, tab_traj = st.tabs([
+    if "command_help_expanded" not in st.session_state:
+        # Default: collapsed on first page load
+        st.session_state["command_help_expanded"] = False
+
+    with st.expander("❓ Help", expanded=bool(st.session_state.get("command_help_expanded", True))):
+        tab_rrr, tab_single, tab_multi, tab_min, tab_poi, tab_we, tab_traj = st.tabs([
             "🔄 Reverse Range Ring",
             "🎯 Single Range Ring",
             "📊 Multiple Range Ring",
             "📏 Minimum Range Ring",
             "📍 Custom POI",
+            "🌍 World Events",
             "🚀 Launch Trajectory",
         ])
 
@@ -194,6 +204,7 @@ def _render_help_section() -> None:
         multiple_command.help_tab(tab_multi)
         minimum_command.help_tab(tab_min)
         custom_poi_command.help_tab(tab_poi)
+        world_events_command.help_tab(tab_we)
         trajectory_command.help_tab(tab_traj)
 
 
@@ -270,6 +281,7 @@ def _mock_intent_response(query: str) -> tuple[CommandOutput, str, str]:
 
     # Pending flows first
     for handler in (
+        world_events_command.handle_pending,
         multiple_command.handle_pending,
         minimum_command.handle_pending,
         single_command.handle_pending,
@@ -282,6 +294,7 @@ def _mock_intent_response(query: str) -> tuple[CommandOutput, str, str]:
 
     # Initial parse flows (priority order mirrors previous behavior)
     for parser in (
+        world_events_command.parse_initial,
         reverse_command.parse_initial,
         single_command.parse_initial,
         minimum_command.parse_initial,
@@ -336,7 +349,11 @@ def render_command_center() -> None:
             or get_command_minimum_pending() is not None
             or get_command_multiple_pending() is not None
             or get_command_custom_poi_pending() is not None
+            or get_command_world_events_pending() is not None
         ):
+            # When the user executes Step 1 and we transition into a Step 2 pending panel,
+            # collapse Help to keep the main workflow in focus.
+            st.session_state["command_help_expanded"] = False
             st.rerun()
 
     _render_help_section()

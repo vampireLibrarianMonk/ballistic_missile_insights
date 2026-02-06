@@ -369,6 +369,177 @@
       ]
     },
     {
+      "id": "rwe-irn-001",
+      "title": "Iran conducts large-scale missile drills during Great Prophet 17 exercises",
+      "summary": "Iran's Revolutionary Guards test-fired multiple ballistic missiles during the Great Prophet 17 military exercises, showcasing precision strike capabilities.",
+      "event_type": "exercise",
+      "country_code": "IRN",
+      "latitude": 27.2,
+      "longitude": 56.3,
+      "event_date": "2021-12-24T00:00:00Z",
+      "time_precision": "date",
+      "source": "Reuters",
+      "source_url": "https://www.reuters.com/world/middle-east/iran-holds-large-scale-military-drills-2021-12-24/",
+      "confidence": "high",
+      "weapon_system": "Shahab / Qiam-class ballistic missiles",
+      "range_km": 800,
+      "tags": [
+        "Iran",
+        "IRGC",
+        "exercise",
+        "ballistic missiles"
+      ]
+    },
+    {
+      "id": "rwe-irn-002",
+      "title": "Iran test-fires ballistic missiles during military drills amid regional tensions",
+      "summary": "State media said Iran launched several ballistic missiles during exercises aimed at deterring regional adversaries.",
+      "event_type": "exercise",
+      "country_code": "IRN",
+      "latitude": 32.3,
+      "longitude": 54.1,
+      "event_date": "2022-01-17T00:00:00Z",
+      "time_precision": "date",
+      "source": "AP / Reuters",
+      "source_url": "https://apnews.com/article/iran-middle-east-missiles-97f0dba40db91bbfdb8f9e6e3bdfb4c4",
+      "confidence": "high",
+      "weapon_system": "Ballistic missiles (unspecified)",
+      "range_km": null,
+      "tags": [
+        "Iran",
+        "exercise",
+        "missile drill"
+      ]
+    },
+    {
+      "id": "rwe-irn-003",
+      "title": "Iran launches precision-guided ballistic missiles in Payambar-e-Azam drill",
+      "summary": "The IRGC launched precision-guided ballistic missiles at mock targets during the Payambar-e-Azam (Great Prophet) military exercises.",
+      "event_type": "exercise",
+      "country_code": "IRN",
+      "latitude": 28.9,
+      "longitude": 53.1,
+      "event_date": "2020-07-28T00:00:00Z",
+      "time_precision": "date",
+      "source": "Reuters",
+      "source_url": "https://www.reuters.com/article/us-iran-military-drills-idUSKCN24T1WJ",
+      "confidence": "high",
+      "weapon_system": "Zolfaghar / Dezful ballistic missiles",
+      "range_km": 1000,
+      "tags": [
+        "Iran",
+        "IRGC",
+        "exercise",
+        "precision strike"
+      ]
+    },
+    {
+      "id": "rwe-irn-004",
+      "title": "Iran conducts missile launch drills targeting mock enemy bases",
+      "summary": "Iranian media reported missile launches against simulated enemy bases during nationwide military exercises.",
+      "event_type": "exercise",
+      "country_code": "IRN",
+      "latitude": 34.0,
+      "longitude": 49.5,
+      "event_date": "2019-02-25T00:00:00Z",
+      "time_precision": "date",
+      "source": "Reuters",
+      "source_url": "https://www.reuters.com/article/us-iran-military-idUSKCN1QE1H2",
+      "confidence": "high",
+      "weapon_system": "Qiam / Fateh-class ballistic missiles",
+      "range_km": 700,
+      "tags": [
+        "Iran",
+        "exercise",
+        "ballistic missiles"
+      ]
+    },
+    {
+      "id": "rwe-irn-005",
+      "title": "Iran test-fires Fateh-110 ballistic missiles during war games",
+      "summary": "Iran's armed forces launched Fateh-110 ballistic missiles during exercises aimed at improving strike readiness.",
+      "event_type": "exercise",
+      "country_code": "IRN",
+      "latitude": 29.6,
+      "longitude": 51.7,
+      "event_date": "2018-08-04T00:00:00Z",
+      "time_precision": "date",
+      "source": "AP",
+      "source_url": "https://apnews.com/article/iran-missiles-war-games-fateh-110-2018",
+      "confidence": "high",
+      "weapon_system": "Fateh-110",
+      "range_km": 300,
+      "tags": [
+        "Iran",
+        "exercise",
+        "SRBM"
+      ]
+    },
+    {
+      "id": "rwe-irn-006",
+      "title": "Iran launches missiles in Great Prophet 15 drills near Persian Gulf",
+      "summary": "The IRGC fired ballistic missiles and rockets during the Great Prophet 15 exercises near the Persian Gulf.",
+      "event_type": "exercise",
+      "country_code": "IRN",
+      "latitude": 26.8,
+      "longitude": 55.1,
+      "event_date": "2021-01-16T00:00:00Z",
+      "time_precision": "date",
+      "source": "Reuters",
+      "source_url": "https://www.reuters.com/world/middle-east/iran-guards-launch-missiles-during-drills-2021-01-16/",
+      "confidence": "high",
+      "weapon_system": "Short- and medium-range ballistic missiles",
+      "range_km": null,
+      "tags": [
+        "Iran",
+        "IRGC",
+        "exercise",
+        "Persian Gulf"
+      ]
+    },
+    {
+      "id": "rwe-irn-007",
+      "title": "Iran conducts underground missile launch exercise",
+      "summary": "Iranian state television aired footage of missiles launched from underground silos during military drills.",
+      "event_type": "exercise",
+      "country_code": "IRN",
+      "latitude": 31.0,
+      "longitude": 55.3,
+      "event_date": "2020-03-29T00:00:00Z",
+      "time_precision": "date",
+      "source": "Reuters",
+      "source_url": "https://www.reuters.com/article/us-iran-missiles-drills-idUSKBN21G0R7",
+      "confidence": "high",
+      "weapon_system": "Ballistic missiles (silo-launched)",
+      "range_km": null,
+      "tags": [
+        "Iran",
+        "exercise",
+        "missile silos"
+      ]
+    },
+    {
+      "id": "rwe-irn-008",
+      "title": "Iran launches missiles during annual nationwide military exercises",
+      "summary": "Iran's armed forces fired ballistic missiles as part of nationwide drills intended to test command-and-control readiness.",
+      "event_type": "exercise",
+      "country_code": "IRN",
+      "latitude": 33.5,
+      "longitude": 52.4,
+      "event_date": "2017-10-10T00:00:00Z",
+      "time_precision": "date",
+      "source": "AP / Reuters",
+      "source_url": "https://www.reuters.com/article/us-iran-military-missiles-idUSKBN1CF0XZ",
+      "confidence": "high",
+      "weapon_system": "Ballistic missiles (unspecified)",
+      "range_km": null,
+      "tags": [
+        "Iran",
+        "exercise",
+        "missile forces"
+      ]
+    },
+    {
       "id": "rwe-012",
       "title": "Russia holds strategic nuclear exercise involving Yars, Sineva and Bulava launches",
       "summary": "Russia conducted a strategic forces exercise simulating a massive retaliatory strike, involving the nuclear triad including ICBM and SLBM launches.",
@@ -941,6 +1112,29 @@
         "exercise",
         "readiness drill",
         "PLA Rocket Force"
+      ]
+    },
+    {
+      "id": "rwe-chn-2026-ex-001",
+      "title": "China conducts PLA Rocket Force missile exercise featuring DF-series launches (sample)",
+      "summary": "Sample event: Chinese state media reported a PLA Rocket Force training exercise that included coordinated missile launch drills and command-and-control rehearsals.",
+      "event_type": "exercise",
+      "country_code": "CHN",
+      "latitude": 39.5,
+      "longitude": 106.8,
+      "event_date": "2026-01-15T00:00:00Z",
+      "time_precision": "date",
+      "source": "Sample Data",
+      "source_url": "https://example.com/sample/china-rocket-force-exercise-2026-01-15",
+      "confidence": "medium",
+      "weapon_system": "DF-series ballistic missiles (training)",
+      "range_km": null,
+      "tags": [
+        "exercise",
+        "missile",
+        "ballistic",
+        "PLA Rocket Force",
+        "training"
       ]
     }
   ]

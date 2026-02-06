@@ -27,6 +27,9 @@ COMMAND_MINIMUM_PENDING_KEY = "command_minimum_pending"
 COMMAND_MULTIPLE_PENDING_KEY = "command_multiple_pending"
 COMMAND_CUSTOM_POI_PENDING_KEY = "command_custom_poi_pending"
 
+# World events command flow state
+COMMAND_WORLD_EVENTS_PENDING_KEY = "command_world_events_pending"
+
 # Per-tool visualization render version keys (forces map reset)
 TOOL_VIZ_VERSION_SUFFIX = "_viz_version"
 
@@ -79,6 +82,9 @@ def init_session_state() -> None:
         st.session_state[COMMAND_MULTIPLE_PENDING_KEY] = None
     if COMMAND_CUSTOM_POI_PENDING_KEY not in st.session_state:
         st.session_state[COMMAND_CUSTOM_POI_PENDING_KEY] = None
+
+    if COMMAND_WORLD_EVENTS_PENDING_KEY not in st.session_state:
+        st.session_state[COMMAND_WORLD_EVENTS_PENDING_KEY] = None
     
     # Tool-specific state initialization
     _init_tool_states()
@@ -290,6 +296,16 @@ def get_command_custom_poi_pending() -> Optional[dict]:
 def set_command_custom_poi_pending(data: Optional[dict]) -> None:
     """Set or clear the pending custom POI selection data."""
     st.session_state[COMMAND_CUSTOM_POI_PENDING_KEY] = data
+
+
+def get_command_world_events_pending() -> Optional[dict]:
+    """Get the pending world events command selection data."""
+    return st.session_state.get(COMMAND_WORLD_EVENTS_PENDING_KEY)
+
+
+def set_command_world_events_pending(data: Optional[dict]) -> None:
+    """Set or clear the pending world events selection data."""
+    st.session_state[COMMAND_WORLD_EVENTS_PENDING_KEY] = data
 
 
 # Tool State Functions
