@@ -1,0 +1,41 @@
+Executive Summary
+The Open Range Ring Generator (ORRG) is a Streamlit-based, open-source geodesic range ring analysis platform built to replace proprietary GIS workflows with transparent, analyst-ready tooling. It fuses situational awareness (live missile-related event monitoring) with modular analytic tools that generate true geodesic range rings from missile launch points, targets, and country boundaries. For a ballistic missile GEOINT analyst, ORRG provides rapid visualization of weapon reach, potential threat envelopes, and minimum/maximum engagement distances, while preserving provenance and export-ready geometry for downstream exploitation. GEOINT product manufacturing is now in the analyst’s hands, with repeatable, auditable workflows that do not rely on external GIS licenses or opaque MXD files.
+
+Application Sections
+
+1. Command Center (⚡ Command)
+Purpose: Centralized analyst workflow hub for coordinating tasks, executing quick actions, and accessing command-driven utilities.
+Analyst Value: Provides a rapid operational entry point for orchestrating analysis steps without navigating multiple panels, allowing GEOINT analysts to move from tasking to finished products with minimal friction. By centralizing actions, it reduces cognitive load and keeps product manufacturing under the analyst’s direct control.
+
+2. Situational Awareness (🌍 World Events)
+Purpose: A world map and news feed for missile-related events, with filters by country, weapon class, event type, source, and time window.
+Analyst Value: Enables GEOINT analysts to maintain global context, correlate current events with known launch geographies, and quickly identify relevant events for deeper range-ring analysis. This context layer accelerates triage and ensures analysts can align geospatial products with real-world developments in near real time.
+
+3. Analytical Tools (📊 Analytical Tools)
+Purpose: Five independent geodesic range ring generators that each render their own outputs and export products locally within the tool section.
+Analyst Value: Supports tactical/strategic assessment of missile reach, launch feasibility, and target vulnerability with true geodesic geometry and analyst-grade exports. Each tool is designed for rapid iteration, keeping GEOINT product manufacturing in the analyst’s hands while preserving traceability and reproducibility.
+
+   3.1 Single Range Ring Generator
+   Purpose: Generate a single geodesic range ring from a country boundary or specific point of origin.
+   Analyst Value: Rapidly visualize a weapon’s maximum reach from a known launch area, with maximum reach represented by the country border. This enables quick boundary-based threat assessment and supports analyst-led product creation without external GIS preprocessing.
+
+   3.2 Multiple Range Ring Generator
+   Purpose: Generate multiple concentric rings representing several weapon ranges or systems.
+   Analyst Value: Compare multi-weapon reach envelopes and tiered threat zones in a single view, with maximum reach represented by the country border. Analysts can contrast systems rapidly and produce layered products for briefings without leaving the tool.
+
+   3.3 Reverse Range Ring Generator
+   Purpose: Compute the possible launch region(s) from which a weapon could reach a specified target point.
+   Analyst Value: Backtrack potential launch areas for a target of interest, supporting attribution and monitoring. This gives analysts a fast way to generate GEOINT products that narrow potential origin areas based on reach geometry.
+
+   3.4 Minimum Range Ring Generator
+   Purpose: Calculate and display the minimum geodesic distance between two countries or locations.
+   Analyst Value: Identify shortest feasible engagement distances and validate minimum range constraints. This helps analysts confirm feasibility thresholds and document minimum-range considerations directly in their products.
+
+   3.5 Custom POI Range Ring Generator
+   Purpose: Generate minimum/maximum “donut” range rings from user-defined points of interest.
+   Analyst Value: Model custom basing, deployment, or suspected sites and evaluate coverage envelopes. The flexibility to define POIs keeps GEOINT product manufacturing firmly in the analyst’s hands for bespoke scenarios.
+
+4. Export and Analyst Diagnostics
+Purpose: Each tool output supports GeoJSON, KMZ, PNG, and PDF export, with analyst mode exposing diagnostic metadata (resolution, point count, CRS, processing metrics).
+Analyst Value: Provides authoritative geometry for GIS integration and reproducible products for reporting, enabling analysts to deliver standardized outputs while maintaining full control of the product pipeline.
+Template Rationale: The SVG map product template (app/templates/output-template.svg) provides a deterministic, version-controlled layout that can be automated and reproduced consistently, unlike ArcGIS MXD workflows that are proprietary, harder to audit, and less portable across analysts and environments. This approach keeps the GEOINT product manufacturing workflow transparent, scriptable, and analyst-owned.

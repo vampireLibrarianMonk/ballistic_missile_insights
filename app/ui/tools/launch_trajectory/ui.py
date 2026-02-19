@@ -376,7 +376,124 @@ def hex_to_rgb(hex_color: str) -> list[int]:
     return [int(hex_color[i:i+2], 16) for i in (0, 2, 4)]
 
 
-def render_trajectory_map_with_legend(points: list[dict], sensors: list[dict], height: int = 500) -> None:
+def _calculate_bearing_deg(start_point: dict, end_point: dict) -> float:
+    """Calculate bearing in degrees from start to end point."""
+    import math
+
+    lat1 = math.radians(start_point.get("latitude", 0.0))
+    lon1 = math.radians(start_point.get("longitude", 0.0))
+    lat2 = math.radians(end_point.get("latitude", 0.0))
+    lon2 = math.radians(end_point.get("longitude", 0.0))
+
+    dlon = lon2 - lon1
+    x = math.sin(dlon) * math.cos(lat2)
+    y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+    bearing = math.degrees(math.atan2(x, y))
+    return (bearing + 360) % 360
+
+
+def _rotate_trajectory_points(points: list[dict], rotation_degrees: float) -> list[dict]:
+    """Rotate trajectory points around the trajectory center by rotation_degrees."""
+    import math
+
+    if not points or abs(rotation_degrees) < 1e-6:
+        return [dict(point) for point in points]
+
+    center_lat = sum(p.get("latitude", 0) for p in points) / len(points)
+    center_lon = sum(p.get("longitude", 0) for p in points) / len(points)
+    center_lat_rad = math.radians(center_lat)
+    cos_lat = math.cos(center_lat_rad) or 1.0
+
+    angle = math.radians(rotation_degrees)
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+
+    rotated = []
+    for point in points:
+        lon = point.get("longitude", 0.0)
+        lat = point.get("latitude", 0.0)
+        x = (lon - center_lon) * cos_lat
+        y = lat - center_lat
+
+        x_rot = x * cos_a - y * sin_a
+        y_rot = x * sin_a + y * cos_a
+
+        rotated_lon = (x_rot / cos_lat) + center_lon
+        rotated_lat = y_rot + center_lat
+
+        rotated_point = dict(point)
+        rotated_point["longitude"] = rotated_lon
+        rotated_point["latitude"] = rotated_lat
+        rotated.append(rotated_point)
+
+    return rotated
+
+
+def _get_phase_boundary_points(points: list[dict]) -> list[dict]:
+    """Return points where the flight phase changes between consecutive samples."""
+    if not points:
+        return []
+
+    boundaries = []
+    last_phase = (points[0].get("phase") or "unknown").lower()
+    for point in points[1:]:
+        current_phase = (point.get("phase") or "unknown").lower()
+        if current_phase != last_phase:
+            boundary = dict(point)
+            boundary["from_phase"] = last_phase
+            boundary["to_phase"] = current_phase
+            boundaries.append(boundary)
+            last_phase = current_phase
+        else:
+            last_phase = current_phase
+
+    return boundaries
+
+
+def _render_orientation_dial(base_bearing: float, rotation_offset: float) -> None:
+    """Render a circular dial showing launch/impact orientation relative to cardinals."""
+    import math
+    import streamlit.components.v1 as components
+
+    effective_bearing = (base_bearing + rotation_offset) % 360
+    radius = 80
+    center = 100
+
+    def _marker_position(angle_deg: float) -> tuple[float, float]:
+        angle_rad = math.radians(angle_deg)
+        x = center + radius * math.sin(angle_rad)
+        y = center - radius * math.cos(angle_rad)
+        return x, y
+
+    launch_x, launch_y = _marker_position(effective_bearing)
+    impact_x, impact_y = _marker_position((effective_bearing + 180) % 360)
+
+    dial_html = f"""
+    <div style="display:flex;justify-content:center;align-items:center;">
+      <svg width="200" height="200" viewBox="0 0 200 200">
+        <circle cx="100" cy="100" r="80" fill="#f8f8f8" stroke="#333" stroke-width="2" />
+        <text x="100" y="20" text-anchor="middle" font-size="12" fill="#333">N</text>
+        <text x="185" y="105" text-anchor="middle" font-size="12" fill="#333">E</text>
+        <text x="100" y="195" text-anchor="middle" font-size="12" fill="#333">S</text>
+        <text x="15" y="105" text-anchor="middle" font-size="12" fill="#333">W</text>
+        <line x1="100" y1="20" x2="100" y2="180" stroke="#ddd" stroke-width="1" />
+        <line x1="20" y1="100" x2="180" y2="100" stroke="#ddd" stroke-width="1" />
+        <circle cx="{launch_x:.1f}" cy="{launch_y:.1f}" r="6" fill="#00FF00" stroke="#333" stroke-width="1" />
+        <circle cx="{impact_x:.1f}" cy="{impact_y:.1f}" r="6" fill="#FF0000" stroke="#333" stroke-width="1" />
+        <text x="{launch_x:.1f}" y="{launch_y - 10:.1f}" text-anchor="middle" font-size="10" fill="#333">L</text>
+        <text x="{impact_x:.1f}" y="{impact_y - 10:.1f}" text-anchor="middle" font-size="10" fill="#333">I</text>
+      </svg>
+    </div>
+    """
+    components.html(dial_html, height=220)
+
+
+def render_trajectory_map_with_legend(
+    points: list[dict],
+    sensors: list[dict],
+    height: int = 500,
+    mode: TrajectoryMode = TrajectoryMode.MODE_2D,
+) -> None:
     """
     Render trajectory points on a pydeck map with sensor-based coloring and integrated legend.
     Mirrors the render_map_with_legend pattern from tool_components.py.
@@ -402,16 +519,24 @@ def render_trajectory_map_with_legend(points: list[dict], sensors: list[dict], h
     # Default color for points without sensor
     default_color = [136, 136, 136]  # Gray
     
+    is_3d = mode == TrajectoryMode.MODE_3D
+    elevation_scale = st.session_state.launch_trajectory_elevation_scale if is_3d else 1.0
+
     # Build path data - group consecutive points by sensor for line segments
     path_data = []
     current_sensor = None
     current_path = []
     
     sorted_points = sorted(points, key=lambda p: p.get("sequence_index", 0))
+    show_phase_boundaries = bool(st.session_state.launch_trajectory_show_phase_boundaries)
+    boundary_points = _get_phase_boundary_points(sorted_points) if show_phase_boundaries else []
     
     for i, point in enumerate(sorted_points):
         sensor_id = point.get("sensor_id")
+        altitude = (point.get("altitude") or 0) * elevation_scale if is_3d else 0
         coord = [point.get("longitude", 0), point.get("latitude", 0)]
+        if is_3d:
+            coord.append(altitude)
         
         if sensor_id != current_sensor and current_path:
             # Save current path and start new one
@@ -443,8 +568,12 @@ def render_trajectory_map_with_legend(points: list[dict], sensors: list[dict], h
     for point in sorted_points:
         sensor_id = point.get("sensor_id")
         color = sensor_colors.get(sensor_id, default_color)
+        altitude = (point.get("altitude") or 0) * elevation_scale if is_3d else 0
+        position = [point.get("longitude", 0), point.get("latitude", 0)]
+        if is_3d:
+            position.append(altitude)
         point_data.append({
-            "position": [point.get("longitude", 0), point.get("latitude", 0)],
+            "position": position,
             "color": color + [255],
             "phase": point.get("phase", "unknown"),
             "sensor_id": sensor_id or "N/A",
@@ -458,8 +587,12 @@ def render_trajectory_map_with_legend(points: list[dict], sensors: list[dict], h
     
     marker_data = []
     if launch_point:
+        launch_altitude = (launch_point.get("altitude") or 0) * elevation_scale if is_3d else 0
+        launch_position = [launch_point.get("longitude", 0), launch_point.get("latitude", 0)]
+        if is_3d:
+            launch_position.append(launch_altitude)
         marker_data.append({
-            "position": [launch_point.get("longitude", 0), launch_point.get("latitude", 0)],
+            "position": launch_position,
             "color": [0, 255, 0, 255],  # Green for launch
             "name": "Launch Point",
             "phase": launch_point.get("phase", "boost"),
@@ -467,8 +600,12 @@ def render_trajectory_map_with_legend(points: list[dict], sensors: list[dict], h
             "altitude": launch_point.get("altitude") or 0,
         })
     if impact_point:
+        impact_altitude = (impact_point.get("altitude") or 0) * elevation_scale if is_3d else 0
+        impact_position = [impact_point.get("longitude", 0), impact_point.get("latitude", 0)]
+        if is_3d:
+            impact_position.append(impact_altitude)
         marker_data.append({
-            "position": [impact_point.get("longitude", 0), impact_point.get("latitude", 0)],
+            "position": impact_position,
             "color": [255, 0, 0, 255],  # Red for impact
             "name": "Impact Point",
             "phase": impact_point.get("phase", "terminal"),
@@ -479,15 +616,35 @@ def render_trajectory_map_with_legend(points: list[dict], sensors: list[dict], h
     # Find apogee (highest altitude point)
     if sorted_points:
         apogee_point = max(sorted_points, key=lambda p: p.get("altitude", 0) or 0)
-        if apogee_point.get("altitude", 0) > 0:
+        apogee_altitude_value = apogee_point.get("altitude") or 0
+        if apogee_altitude_value > 0:
+            apogee_altitude = apogee_altitude_value * elevation_scale if is_3d else 0
+            apogee_position = [apogee_point.get("longitude", 0), apogee_point.get("latitude", 0)]
+            if is_3d:
+                apogee_position.append(apogee_altitude)
             marker_data.append({
-                "position": [apogee_point.get("longitude", 0), apogee_point.get("latitude", 0)],
+                "position": apogee_position,
                 "color": [255, 165, 0, 255],  # Orange for apogee
-                "name": f"Apogee ({apogee_point.get('altitude', 0):,.0f}m)",
+                "name": f"Apogee ({apogee_altitude_value:,.0f}m)",
                 "phase": apogee_point.get("phase", "midcourse"),
                 "sensor_id": apogee_point.get("sensor_id", "N/A"),
-                "altitude": apogee_point.get("altitude") or 0,
+                "altitude": apogee_altitude_value,
             })
+
+    boundary_data = []
+    for boundary in boundary_points:
+        altitude = (boundary.get("altitude") or 0) * elevation_scale if is_3d else 0
+        position = [boundary.get("longitude", 0), boundary.get("latitude", 0)]
+        if is_3d:
+            position.append(altitude)
+        boundary_data.append({
+            "position": position,
+            "color": [255, 215, 0, 220],  # Gold for phase boundary
+            "name": f"Phase Boundary ({boundary.get('from_phase')}→{boundary.get('to_phase')})",
+            "phase": boundary.get("to_phase", "unknown"),
+            "sensor_id": boundary.get("sensor_id", "N/A"),
+            "altitude": boundary.get("altitude") or 0,
+        })
     
     # Calculate view center
     avg_lat = sum(p.get("latitude", 0) for p in sorted_points) / len(sorted_points)
@@ -507,6 +664,7 @@ def render_trajectory_map_with_legend(points: list[dict], sensors: list[dict], h
                 width_min_pixels=4,
                 width_max_pixels=10,
                 pickable=True,
+                billboard=not is_3d,
             )
         )
     
@@ -540,14 +698,28 @@ def render_trajectory_map_with_legend(points: list[dict], sensors: list[dict], h
                 pickable=True,
             )
         )
+
+    if boundary_data:
+        layers.append(
+            pdk.Layer(
+                "ScatterplotLayer",
+                data=boundary_data,
+                get_position="position",
+                get_color="color",
+                get_radius=80,
+                radius_min_pixels=10,
+                radius_max_pixels=10,
+                pickable=True,
+            )
+        )
     
     # Create deck
     view_state = pdk.ViewState(
         latitude=avg_lat,
         longitude=avg_lon,
         zoom=5,
-        pitch=0,
-        bearing=0,
+        pitch=st.session_state.launch_trajectory_pitch if is_3d else 0,
+        bearing=st.session_state.launch_trajectory_bearing if is_3d else 0,
     )
     
     deck = pdk.Deck(
@@ -603,6 +775,17 @@ def render_trajectory_map_with_legend(points: list[dict], sensors: list[dict], h
             <div style="font-size: 11px;"><strong>Impact Point</strong></div>
         </div>
     </div>'''
+
+    if show_phase_boundaries:
+        legend_items_html += '''
+        <div style="margin-top: 6px;">
+            <div style="display: flex; align-items: center; margin: 4px 0;">
+                <div style="width: 14px; height: 14px; background-color: #FFD700;
+                     border: 2px solid #333; border-radius: 3px;
+                     margin-right: 8px; flex-shrink: 0;"></div>
+                <div style="font-size: 11px;"><strong>Phase Boundary</strong></div>
+            </div>
+        </div>'''
     
     # Get deck HTML and inject legend
     deck_html = deck.to_html(as_string=True)
@@ -691,6 +874,29 @@ def render_trajectory_export_controls() -> None:
     
     # Show expander with export buttons - matches custom_poi pattern
     with st.expander("📥 Download Options", expanded=False):
+        projection_options = {
+            "Azimuthal Equidistant (EPSG:990001)": "EPSG:990001",
+            "Eckert IV (EPSG:990002)": "EPSG:990002",
+        }
+        selected_projection = st.selectbox(
+            "Basemap Projection",
+            options=list(projection_options.keys()),
+            index=0,
+            key="traj_export_projection",
+        )
+        selected_srs = projection_options[selected_projection]
+
+        zoom_factor = st.slider(
+            "Export Zoom",
+            min_value=0.5,
+            max_value=2.0,
+            value=1.0,
+            step=0.1,
+            key="traj_export_zoom",
+            help="Zoom in (>1.0) or out (<1.0) for the exported map image.",
+        )
+        show_phase_boundaries = bool(st.session_state.launch_trajectory_show_phase_boundaries)
+
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
@@ -705,6 +911,8 @@ def render_trajectory_export_controls() -> None:
                     "point_count": len(points),
                     "sensor_count": len(sensors),
                     "has_sensor_attribution": has_sensor_attribution(),
+                    "zoom_factor": zoom_factor,
+                    "show_phase_boundaries": show_phase_boundaries,
                 }
             }
             json_str = json.dumps(export_data, indent=2)
@@ -719,7 +927,12 @@ def render_trajectory_export_controls() -> None:
         with col2:
             # KMZ Export
             if points:
-                kmz_data = generate_trajectory_kmz(points, sensors)
+                kmz_data = generate_trajectory_kmz(
+                    points,
+                    sensors,
+                    rotation_degrees=0.0,
+                    show_phase_boundaries=show_phase_boundaries,
+                )
                 st.download_button(
                     "📥 KMZ",
                     data=kmz_data,
@@ -733,7 +946,15 @@ def render_trajectory_export_controls() -> None:
         with col3:
             # PNG Export
             if points:
-                png_data = generate_trajectory_png(points, sensors)
+                png_data = generate_trajectory_png(
+                    points,
+                    sensors,
+                    srs=selected_srs,
+                    rotation_degrees=0.0,
+                    rotate_image=False,
+                    zoom_factor=zoom_factor,
+                    show_phase_boundaries=show_phase_boundaries,
+                )
                 st.download_button(
                     "📥 PNG",
                     data=png_data,
@@ -747,7 +968,15 @@ def render_trajectory_export_controls() -> None:
         with col4:
             # PDF Export
             if points:
-                pdf_data = generate_trajectory_pdf(points, sensors)
+                pdf_data = generate_trajectory_pdf(
+                    points,
+                    sensors,
+                    srs=selected_srs,
+                    rotation_degrees=0.0,
+                    rotate_image=False,
+                    zoom_factor=zoom_factor,
+                    show_phase_boundaries=show_phase_boundaries,
+                )
                 st.download_button(
                     "📥 PDF",
                     data=pdf_data,
@@ -759,7 +988,12 @@ def render_trajectory_export_controls() -> None:
                 st.button("📥 PDF", disabled=True, key="pdf_disabled")
 
 
-def generate_trajectory_kmz(points: list[dict], sensors: list[dict]) -> bytes:
+def generate_trajectory_kmz(
+    points: list[dict],
+    sensors: list[dict],
+    rotation_degrees: float = 0.0,
+    show_phase_boundaries: bool = False,
+) -> bytes:
     """
     Generate a KMZ file for the trajectory.
     
@@ -787,6 +1021,9 @@ def generate_trajectory_kmz(points: list[dict], sensors: list[dict]) -> bytes:
     
     # Sort points
     sorted_points = sorted(points, key=lambda p: p.get("sequence_index", 0))
+    if rotation_degrees:
+        sorted_points = _rotate_trajectory_points(sorted_points, rotation_degrees)
+    boundary_points = _get_phase_boundary_points(sorted_points) if show_phase_boundaries else []
     
     # Build KML content
     kml_content = '''<?xml version="1.0" encoding="UTF-8"?>
@@ -811,6 +1048,7 @@ def generate_trajectory_kmz(points: list[dict], sensors: list[dict]) -> bytes:
     <Style id="launch"><IconStyle><color>ff00ff00</color><scale>1.2</scale></IconStyle></Style>
     <Style id="apogee"><IconStyle><color>ff00a5ff</color><scale>1.0</scale></IconStyle></Style>
     <Style id="impact"><IconStyle><color>ff0000ff</color><scale>1.2</scale></IconStyle></Style>
+    <Style id="phase_boundary"><IconStyle><color>ff00d7ff</color><scale>1.0</scale></IconStyle></Style>
 '''
     
     # Build path segments by sensor
@@ -874,12 +1112,22 @@ def generate_trajectory_kmz(points: list[dict], sensors: list[dict]) -> bytes:
     </Placemark>'''
         
         apogee = max(sorted_points, key=lambda p: p.get("altitude", 0) or 0)
-        if apogee.get("altitude", 0) > 0:
+        apogee_altitude_value = apogee.get("altitude") or 0
+        if apogee_altitude_value > 0:
             kml_content += f'''
     <Placemark>
-        <name>Apogee ({apogee.get('altitude', 0):,.0f}m)</name>
+        <name>Apogee ({apogee_altitude_value:,.0f}m)</name>
         <styleUrl>#apogee</styleUrl>
-        <Point><coordinates>{apogee.get('longitude', 0)},{apogee.get('latitude', 0)},{apogee.get('altitude', 0)}</coordinates></Point>
+        <Point><coordinates>{apogee.get('longitude', 0)},{apogee.get('latitude', 0)},{apogee_altitude_value}</coordinates></Point>
+    </Placemark>'''
+
+        if boundary_points:
+            for boundary in boundary_points:
+                kml_content += f'''
+    <Placemark>
+        <name>Phase Boundary ({boundary.get('from_phase')}→{boundary.get('to_phase')})</name>
+        <styleUrl>#phase_boundary</styleUrl>
+        <Point><coordinates>{boundary.get('longitude', 0)},{boundary.get('latitude', 0)},{boundary.get('altitude', 0) or 0}</coordinates></Point>
     </Placemark>'''
     
     kml_content += '''
@@ -895,13 +1143,72 @@ def generate_trajectory_kmz(points: list[dict], sensors: list[dict]) -> bytes:
     return kmz_buffer.getvalue()
 
 
-def _fetch_trajectory_basemap(min_lon: float, min_lat: float, max_lon: float, max_lat: float, 
-                               width: int, height: int) -> 'PILImage.Image':
+ORRG_AEQD_WKT = (
+    'PROJCS["ORRG Azimuthal Equidistant",'
+    'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],'
+    'PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433],AUTHORITY["EPSG","4326"]],' 
+    'PROJECTION["Azimuthal_Equidistant"],'
+    'PARAMETER["latitude_of_center",0.0],PARAMETER["longitude_of_center",0.0],'
+    'PARAMETER["false_easting",0.0],PARAMETER["false_northing",0.0],'
+    'UNIT["metre",1.0],AUTHORITY["EPSG","990001"]]'
+)
+ORRG_ECKERT_IV_WKT = (
+    'PROJCS["ORRG Eckert IV",'
+    'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],'
+    'PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433],AUTHORITY["EPSG","4326"]],' 
+    'PROJECTION["Eckert_IV"],PARAMETER["Central_Meridian",0.0],'
+    'UNIT["metre",1.0],AUTHORITY["EPSG","990002"]]'
+)
+
+
+def _get_projection_crs(srs: str):
+    from pyproj import CRS
+
+    if srs == "EPSG:990001":
+        return CRS.from_wkt(ORRG_AEQD_WKT)
+    if srs == "EPSG:990002":
+        return CRS.from_wkt(ORRG_ECKERT_IV_WKT)
+    return CRS.from_user_input(srs)
+
+
+def _project_trajectory_points(points: list[dict], srs: str) -> list[dict]:
+    from pyproj import Transformer
+
+    if srs == "EPSG:4326":
+        return [{**point, "x": point.get("longitude", 0), "y": point.get("latitude", 0)} for point in points]
+
+    transformer = Transformer.from_crs("EPSG:4326", _get_projection_crs(srs), always_xy=True)
+    projected = []
+    for point in points:
+        lon = point.get("longitude", 0)
+        lat = point.get("latitude", 0)
+        x, y = transformer.transform(lon, lat)
+        projected.append({**point, "x": x, "y": y})
+    return projected
+
+
+def _format_projection_label(srs: str) -> str:
+    if srs == "EPSG:990001":
+        return "ORRG Azimuthal Equidistant (EPSG:990001)"
+    if srs == "EPSG:990002":
+        return "ORRG Eckert IV (EPSG:990002)"
+    return srs
+
+
+def _fetch_trajectory_basemap(
+    min_x: float,
+    min_y: float,
+    max_x: float,
+    max_y: float,
+    width: int,
+    height: int,
+    srs: str = "EPSG:990001",
+) -> 'PILImage.Image':
     """
     Fetch basemap from GeoServer WMS (same as custom POI tool).
     
     Args:
-        min_lon, min_lat, max_lon, max_lat: Bounding box in WGS84 degrees
+        min_x, min_y, max_x, max_y: Bounding box in the target SRS units
         width, height: Image dimensions in pixels
         
     Returns:
@@ -914,7 +1221,7 @@ def _fetch_trajectory_basemap(min_lon: float, min_lat: float, max_lon: float, ma
     GEOSERVER_WMS_URL = "http://localhost:8080/geoserver/ows"
     GEOSERVER_BASEMAP_LAYER = "ne:world"
     
-    # Use EPSG:4326 for WGS84 geographic coordinates
+    # Use custom ORRG CRS (EPSG:990001 AEQD or EPSG:990002 Eckert IV)
     params = {
         "service": "WMS",
         "version": "1.1.1",
@@ -923,8 +1230,8 @@ def _fetch_trajectory_basemap(min_lon: float, min_lat: float, max_lon: float, ma
         "format": "image/png",
         "width": width,
         "height": height,
-        "srs": "EPSG:4326",
-        "bbox": f"{min_lon},{min_lat},{max_lon},{max_lat}",
+        "srs": srs,
+        "bbox": f"{min_x},{min_y},{max_x},{max_y}",
     }
     
     try:
@@ -943,7 +1250,17 @@ def _fetch_trajectory_basemap(min_lon: float, min_lat: float, max_lon: float, ma
         return PILImage.new('RGB', (width, height), (212, 228, 247))
 
 
-def _render_trajectory_map_image(points: list[dict], sensors: list[dict], width: int = 1336, height: int = 676) -> bytes:
+def _render_trajectory_map_image(
+    points: list[dict],
+    sensors: list[dict],
+    width: int = 1336,
+    height: int = 676,
+    srs: str = "EPSG:990001",
+    rotation_degrees: float = 0.0,
+    rotate_image: bool = False,
+    zoom_factor: float = 1.0,
+    show_phase_boundaries: bool = False,
+) -> bytes:
     """
     Render just the trajectory map image for embedding in SVG template.
     Uses GeoServer WMS basemap (same as custom POI tool).
@@ -983,101 +1300,124 @@ def _render_trajectory_map_image(points: list[dict], sensors: list[dict], width:
         img.save(buf, format='PNG')
         return buf.getvalue()
     
+    if rotation_degrees and not rotate_image:
+        sorted_points = _rotate_trajectory_points(sorted_points, rotation_degrees)
+    projected_points = _project_trajectory_points(sorted_points, srs)
+    boundary_points = _get_phase_boundary_points(projected_points) if show_phase_boundaries else []
+
     # Calculate bounding box with padding to ensure entire trajectory is visible
-    lons = [p.get("longitude", 0) for p in sorted_points]
-    lats = [p.get("latitude", 0) for p in sorted_points]
-    
-    lon_range = max(lons) - min(lons) if len(lons) > 1 else 1.0
-    lat_range = max(lats) - min(lats) if len(lats) > 1 else 1.0
-    
+    xs = [p.get("x", 0) for p in projected_points]
+    ys = [p.get("y", 0) for p in projected_points]
+
+    x_range = max(xs) - min(xs) if len(xs) > 1 else 1.0
+    y_range = max(ys) - min(ys) if len(ys) > 1 else 1.0
+
     # Use larger padding to ensure all markers are visible
     pad_factor = 0.20  # 20% padding on each side
-    lon_pad = max(lon_range * pad_factor, 0.5)  # Minimum 0.5 degree padding
-    lat_pad = max(lat_range * pad_factor, 0.5)
-    
-    min_lon = min(lons) - lon_pad
-    max_lon = max(lons) + lon_pad
-    min_lat = min(lats) - lat_pad
-    max_lat = max(lats) + lat_pad
+    min_pad = 0.5 if srs == "EPSG:4326" else 50000.0
+    x_pad = max(x_range * pad_factor, min_pad)
+    y_pad = max(y_range * pad_factor, min_pad)
+
+    min_x = min(xs) - x_pad
+    max_x = max(xs) + x_pad
+    min_y = min(ys) - y_pad
+    max_y = max(ys) + y_pad
+
+    zoom_factor = max(0.1, float(zoom_factor or 1.0))
+    if abs(zoom_factor - 1.0) > 1e-6:
+        center_x = (min_x + max_x) / 2
+        center_y = (min_y + max_y) / 2
+        half_width = (max_x - min_x) / 2 / zoom_factor
+        half_height = (max_y - min_y) / 2 / zoom_factor
+        min_x = center_x - half_width
+        max_x = center_x + half_width
+        min_y = center_y - half_height
+        max_y = center_y + half_height
     
     # Adjust aspect ratio to match image dimensions
     target_ratio = width / height
-    current_lon_span = max_lon - min_lon
-    current_lat_span = max_lat - min_lat
-    current_ratio = current_lon_span / current_lat_span
+    current_x_span = max_x - min_x
+    current_y_span = max_y - min_y
+    current_ratio = current_x_span / current_y_span
     
     if current_ratio < target_ratio:
         # Need to expand longitude range
-        needed_lon_span = current_lat_span * target_ratio
-        lon_expansion = (needed_lon_span - current_lon_span) / 2
-        min_lon -= lon_expansion
-        max_lon += lon_expansion
+        needed_x_span = current_y_span * target_ratio
+        x_expansion = (needed_x_span - current_x_span) / 2
+        min_x -= x_expansion
+        max_x += x_expansion
     else:
         # Need to expand latitude range
-        needed_lat_span = current_lon_span / target_ratio
-        lat_expansion = (needed_lat_span - current_lat_span) / 2
-        min_lat -= lat_expansion
-        max_lat += lat_expansion
+        needed_y_span = current_x_span / target_ratio
+        y_expansion = (needed_y_span - current_y_span) / 2
+        min_y -= y_expansion
+        max_y += y_expansion
     
     # Fetch GeoServer basemap (same as custom POI tool)
-    basemap_img = _fetch_trajectory_basemap(min_lon, min_lat, max_lon, max_lat, width, height)
+    basemap_img = _fetch_trajectory_basemap(min_x, min_y, max_x, max_y, width, height, srs=srs)
     
     # Create figure with exact dimensions for template
     dpi = 100
     fig, ax = plt.subplots(1, 1, figsize=(width/dpi, height/dpi), dpi=dpi)
     
     # Display basemap
-    ax.imshow(basemap_img, extent=[min_lon, max_lon, min_lat, max_lat], aspect='auto', zorder=0)
+    ax.imshow(basemap_img, extent=[min_x, max_x, min_y, max_y], aspect='auto', zorder=0)
     
     # Plot trajectory segments by sensor
     current_sensor = None
-    segment_lons = []
-    segment_lats = []
+    segment_xs = []
+    segment_ys = []
     
-    for point in sorted_points:
+    for point in projected_points:
         sensor_id = point.get("sensor_id")
-        lon = point.get("longitude", 0)
-        lat = point.get("latitude", 0)
+        x = point.get("x", 0)
+        y = point.get("y", 0)
         
-        if sensor_id != current_sensor and segment_lons:
+        if sensor_id != current_sensor and segment_xs:
             color = sensor_colors.get(current_sensor, default_color)
-            ax.plot(segment_lons, segment_lats, color=color, linewidth=4, alpha=0.85, solid_capstyle='round', zorder=3)
-            segment_lons = [segment_lons[-1]]
-            segment_lats = [segment_lats[-1]]
+            ax.plot(segment_xs, segment_ys, color=color, linewidth=4, alpha=0.85, solid_capstyle='round', zorder=3)
+            segment_xs = [segment_xs[-1]]
+            segment_ys = [segment_ys[-1]]
         
-        segment_lons.append(lon)
-        segment_lats.append(lat)
+        segment_xs.append(x)
+        segment_ys.append(y)
         current_sensor = sensor_id
     
-    if segment_lons:
+    if segment_xs:
         color = sensor_colors.get(current_sensor, default_color)
-        ax.plot(segment_lons, segment_lats, color=color, linewidth=4, alpha=0.85, solid_capstyle='round', zorder=3)
+        ax.plot(segment_xs, segment_ys, color=color, linewidth=4, alpha=0.85, solid_capstyle='round', zorder=3)
     
     # Plot all points with sensor colors
-    for point in sorted_points:
+    for point in projected_points:
         sensor_id = point.get("sensor_id")
         color = sensor_colors.get(sensor_id, default_color)
-        ax.scatter(point.get("longitude", 0), point.get("latitude", 0), 
+        ax.scatter(point.get("x", 0), point.get("y", 0), 
                    c=color, s=50, zorder=5, edgecolors='black', linewidth=0.5)
     
     # Plot special markers as circles with current fill colors
     if sorted_points:
-        launch = sorted_points[0]
-        ax.scatter(launch.get("longitude", 0), launch.get("latitude", 0), 
+        launch = projected_points[0]
+        ax.scatter(launch.get("x", 0), launch.get("y", 0), 
                    c='#00FF00', s=300, marker='o', zorder=10, edgecolors='black', linewidth=2)
         
-        impact = sorted_points[-1]
-        ax.scatter(impact.get("longitude", 0), impact.get("latitude", 0), 
+        impact = projected_points[-1]
+        ax.scatter(impact.get("x", 0), impact.get("y", 0), 
                    c='#FF0000', s=300, marker='o', zorder=10, edgecolors='black', linewidth=2)
         
-        apogee = max(sorted_points, key=lambda p: p.get("altitude", 0) or 0)
-        if apogee.get("altitude", 0) > 0:
-            ax.scatter(apogee.get("longitude", 0), apogee.get("latitude", 0), 
+        apogee = max(projected_points, key=lambda p: p.get("altitude", 0) or 0)
+        apogee_altitude_value = apogee.get("altitude") or 0
+        if apogee_altitude_value > 0:
+            ax.scatter(apogee.get("x", 0), apogee.get("y", 0), 
                        c='#FFA500', s=250, marker='o', zorder=10, edgecolors='black', linewidth=2)
+
+    if boundary_points:
+        for boundary in boundary_points:
+            ax.scatter(boundary.get("x", 0), boundary.get("y", 0),
+                       c='#FFD700', s=140, marker='s', zorder=9, edgecolors='black', linewidth=1.5)
     
     # Set axis limits to match basemap extent
-    ax.set_xlim(min_lon, max_lon)
-    ax.set_ylim(min_lat, max_lat)
+    ax.set_xlim(min_x, max_x)
+    ax.set_ylim(min_y, max_y)
     
     # Remove axes for clean map image
     ax.set_axis_off()
@@ -1089,6 +1429,16 @@ def _render_trajectory_map_image(points: list[dict], sensors: list[dict], width:
     plt.close(fig)
     buf.seek(0)
     
+    if rotate_image and abs(rotation_degrees) > 1e-6:
+        from PIL import Image as PILImage
+        img = PILImage.open(buf).convert('RGBA')
+        rotated = img.rotate(-rotation_degrees, resample=PILImage.BICUBIC, expand=False)
+        rotated_rgb = PILImage.new('RGB', rotated.size, (255, 255, 255))
+        rotated_rgb.paste(rotated, mask=rotated.split()[3])
+        output_buf = BytesIO()
+        rotated_rgb.save(output_buf, format='PNG')
+        return output_buf.getvalue()
+
     return buf.getvalue()
 
 
@@ -1109,6 +1459,11 @@ def _render_trajectory_svg_with_template(
     subtitle: str = "",
     classification: str = "UNCLASSIFIED",
     created_by: str = "ORRG",
+    srs: str = "EPSG:990001",
+    rotation_degrees: float = 0.0,
+    rotate_image: bool = False,
+    zoom_factor: float = 1.0,
+    show_phase_boundaries: bool = False,
 ) -> str:
     """
     Render trajectory using the professional IC-style SVG template.
@@ -1145,7 +1500,15 @@ def _render_trajectory_svg_with_template(
         svg_content = f.read()
     
     # Render the map image and encode as base64
-    map_bytes = _render_trajectory_map_image(points, sensors)
+    map_bytes = _render_trajectory_map_image(
+        points,
+        sensors,
+        srs=srs,
+        rotation_degrees=rotation_degrees,
+        rotate_image=rotate_image,
+        zoom_factor=zoom_factor,
+        show_phase_boundaries=show_phase_boundaries,
+    )
     map_base64 = base64.b64encode(map_bytes).decode("utf-8")
     map_data_uri = f"data:image/png;base64,{map_base64}"
     
@@ -1186,9 +1549,10 @@ def _render_trajectory_svg_with_template(
     )
     
     # Coordinate system
+    projection_label = _format_projection_label(srs)
     svg_content = svg_content.replace(
         '>Coordinate System: Eckert III (world) (Central Meridian 104.0)</text>',
-        '>Coordinate System: WGS 84 Geographic</text>'
+        f'>Coordinate System: {projection_label}</text>'
     )
     
     # Attribution
@@ -1216,6 +1580,8 @@ def _render_trajectory_svg_with_template(
     legend_items.append({"name": "Launch Point", "color": "#00FF00", "is_point": True})
     legend_items.append({"name": "Apogee", "color": "#FFA500", "is_point": True})
     legend_items.append({"name": "Impact Point", "color": "#FF0000", "is_point": True})
+    if show_phase_boundaries:
+        legend_items.append({"name": "Phase Boundary", "color": "#FFD700", "is_point": False})
     
     # Calculate legend dimensions
     num_items = len(legend_items)
@@ -1244,6 +1610,29 @@ def _render_trajectory_svg_with_template(
     if callout_box is not None:
         callout_box.set("width", str(legend_width))
         callout_box.set("height", str(legend_height))
+
+    # Update coordinate system box to expand left and stay within map frame
+    coordinate_group = root.find(".//*[@id='coordinate_box_group']")
+    coordinate_box = root.find(".//*[@id='coordinate_box']")
+    coordinate_line1 = root.find(".//*[@id='coordinate_line1']")
+    coordinate_line2 = root.find(".//*[@id='coordinate_line2']")
+    if coordinate_group is not None and coordinate_box is not None:
+        coord_line1_text = f"Coordinate System: {projection_label}"
+        coord_line2_text = "Datum: D WGS 1984"
+        coord_text_width = max(len(coord_line1_text), len(coord_line2_text)) * 7 + 24
+        coord_box_width = max(coord_text_width, 300)
+        coord_right_edge = 1370
+        coord_x = coord_right_edge - coord_box_width
+        coordinate_group.set("transform", f"translate({coord_x},710)")
+        coordinate_box.set("width", str(coord_box_width))
+        if coordinate_line1 is not None:
+            coordinate_line1.set("x", str(coord_box_width - 12))
+            coordinate_line1.set("text-anchor", "end")
+            coordinate_line1.text = coord_line1_text
+        if coordinate_line2 is not None:
+            coordinate_line2.set("x", str(coord_box_width - 12))
+            coordinate_line2.set("text-anchor", "end")
+            coordinate_line2.text = coord_line2_text
     
     # Replace legend items container with new content
     legend_container = root.find(".//*[@id='legend_items_container']")
@@ -1293,7 +1682,15 @@ def _render_trajectory_svg_with_template(
     return svg_content
 
 
-def generate_trajectory_pdf(points: list[dict], sensors: list[dict]) -> bytes:
+def generate_trajectory_pdf(
+    points: list[dict],
+    sensors: list[dict],
+    srs: str = "EPSG:990001",
+    rotation_degrees: float = 0.0,
+    rotate_image: bool = False,
+    zoom_factor: float = 1.0,
+    show_phase_boundaries: bool = False,
+) -> bytes:
     """
     Generate a PDF of the trajectory using the SVG template (matches other tools' style).
     
@@ -1319,7 +1716,15 @@ def generate_trajectory_pdf(points: list[dict], sensors: list[dict]) -> bytes:
         
         # Render SVG with template
         svg_content = _render_trajectory_svg_with_template(
-            points, sensors, title=title, subtitle=subtitle
+            points,
+            sensors,
+            title=title,
+            subtitle=subtitle,
+            srs=srs,
+            rotation_degrees=rotation_degrees,
+            rotate_image=rotate_image,
+            zoom_factor=zoom_factor,
+            show_phase_boundaries=show_phase_boundaries,
         )
         
         # Convert SVG to PDF
@@ -1333,10 +1738,24 @@ def generate_trajectory_pdf(points: list[dict], sensors: list[dict]) -> bytes:
         
     except ImportError:
         # Fallback to matplotlib PDF if cairosvg not available
-        return _fallback_trajectory_pdf(points, sensors, title, subtitle)
+        return _fallback_trajectory_pdf(
+            points,
+            sensors,
+            title,
+            subtitle,
+            rotation_degrees=rotation_degrees,
+            show_phase_boundaries=show_phase_boundaries,
+        )
 
 
-def _fallback_trajectory_pdf(points: list[dict], sensors: list[dict], title: str, subtitle: str) -> bytes:
+def _fallback_trajectory_pdf(
+    points: list[dict],
+    sensors: list[dict],
+    title: str,
+    subtitle: str,
+    rotation_degrees: float = 0.0,
+    show_phase_boundaries: bool = False,
+) -> bytes:
     """Fallback PDF generation using matplotlib."""
     import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches
@@ -1346,6 +1765,9 @@ def _fallback_trajectory_pdf(points: list[dict], sensors: list[dict], title: str
     sensor_colors = {s.get("sensor_id"): s.get("color", "#888888") for s in sensors}
     default_color = "#888888"
     sorted_points = sorted(points, key=lambda p: p.get("sequence_index", 0))
+    boundary_points = _get_phase_boundary_points(sorted_points) if show_phase_boundaries else []
+    if rotation_degrees:
+        sorted_points = _rotate_trajectory_points(sorted_points, rotation_degrees)
     
     fig, ax = plt.subplots(1, 1, figsize=(14, 9))
     ax.set_facecolor("#e8f4f8")
@@ -1388,6 +1810,11 @@ def _fallback_trajectory_pdf(points: list[dict], sensors: list[dict], title: str
         if apogee.get("altitude", 0) > 0:
             ax.scatter(apogee.get("longitude", 0), apogee.get("latitude", 0), 
                        c='#FFA500', s=180, marker='D', zorder=10, edgecolors='black', linewidth=2)
+
+    if boundary_points:
+        for boundary in boundary_points:
+            ax.scatter(boundary.get("longitude", 0), boundary.get("latitude", 0),
+                       c='#FFD700', s=120, marker='s', zorder=9, edgecolors='black', linewidth=1.5)
     
     legend_handles = []
     for sensor in sensors:
@@ -1400,6 +1827,9 @@ def _fallback_trajectory_pdf(points: list[dict], sensors: list[dict], title: str
                                       markersize=10, markeredgecolor='black', label='Apogee'))
     legend_handles.append(plt.Line2D([0], [0], marker='v', color='w', markerfacecolor='#FF0000', 
                                       markersize=12, markeredgecolor='black', label='Impact Point'))
+    if boundary_points:
+        legend_handles.append(plt.Line2D([0], [0], marker='s', color='w', markerfacecolor='#FFD700',
+                                          markersize=10, markeredgecolor='black', label='Phase Boundary'))
     
     ax.legend(handles=legend_handles, loc='upper left', fontsize=9, framealpha=0.9)
     ax.set_xlabel('Longitude', fontsize=11)
@@ -1421,7 +1851,15 @@ def _fallback_trajectory_pdf(points: list[dict], sensors: list[dict], title: str
     return buf.getvalue()
 
 
-def generate_trajectory_png(points: list[dict], sensors: list[dict]) -> bytes:
+def generate_trajectory_png(
+    points: list[dict],
+    sensors: list[dict],
+    srs: str = "EPSG:990001",
+    rotation_degrees: float = 0.0,
+    rotate_image: bool = False,
+    zoom_factor: float = 1.0,
+    show_phase_boundaries: bool = False,
+) -> bytes:
     """
     Generate a PNG image of the trajectory using the SVG template (matches other tools' style).
     
@@ -1447,7 +1885,15 @@ def generate_trajectory_png(points: list[dict], sensors: list[dict]) -> bytes:
         
         # Render SVG with template
         svg_content = _render_trajectory_svg_with_template(
-            points, sensors, title=title, subtitle=subtitle
+            points,
+            sensors,
+            title=title,
+            subtitle=subtitle,
+            srs=srs,
+            rotation_degrees=rotation_degrees,
+            rotate_image=rotate_image,
+            zoom_factor=zoom_factor,
+            show_phase_boundaries=show_phase_boundaries,
         )
         
         # Convert SVG to PNG with white background
@@ -1475,10 +1921,24 @@ def generate_trajectory_png(points: list[dict], sensors: list[dict]) -> bytes:
         
     except ImportError:
         # Fallback to matplotlib if cairosvg not available
-        return _fallback_trajectory_png(points, sensors, title, subtitle)
+        return _fallback_trajectory_png(
+            points,
+            sensors,
+            title,
+            subtitle,
+            rotation_degrees=rotation_degrees,
+            show_phase_boundaries=show_phase_boundaries,
+        )
 
 
-def _fallback_trajectory_png(points: list[dict], sensors: list[dict], title: str, subtitle: str) -> bytes:
+def _fallback_trajectory_png(
+    points: list[dict],
+    sensors: list[dict],
+    title: str,
+    subtitle: str,
+    rotation_degrees: float = 0.0,
+    show_phase_boundaries: bool = False,
+) -> bytes:
     """Fallback PNG generation using matplotlib."""
     import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches
@@ -1487,6 +1947,9 @@ def _fallback_trajectory_png(points: list[dict], sensors: list[dict], title: str
     sensor_colors = {s.get("sensor_id"): s.get("color", "#888888") for s in sensors}
     default_color = "#888888"
     sorted_points = sorted(points, key=lambda p: p.get("sequence_index", 0))
+    boundary_points = _get_phase_boundary_points(sorted_points) if show_phase_boundaries else []
+    if rotation_degrees:
+        sorted_points = _rotate_trajectory_points(sorted_points, rotation_degrees)
     
     fig, ax = plt.subplots(1, 1, figsize=(14, 9))
     ax.set_facecolor("#e8f4f8")
@@ -1529,6 +1992,11 @@ def _fallback_trajectory_png(points: list[dict], sensors: list[dict], title: str
         if apogee.get("altitude", 0) > 0:
             ax.scatter(apogee.get("longitude", 0), apogee.get("latitude", 0), 
                        c='#FFA500', s=180, marker='D', zorder=10, edgecolors='black', linewidth=2)
+
+    if boundary_points:
+        for boundary in boundary_points:
+            ax.scatter(boundary.get("longitude", 0), boundary.get("latitude", 0),
+                       c='#FFD700', s=120, marker='s', zorder=9, edgecolors='black', linewidth=1.5)
     
     legend_handles = []
     for sensor in sensors:
@@ -1541,6 +2009,9 @@ def _fallback_trajectory_png(points: list[dict], sensors: list[dict], title: str
                                       markersize=10, markeredgecolor='black', label='Apogee'))
     legend_handles.append(plt.Line2D([0], [0], marker='v', color='w', markerfacecolor='#FF0000', 
                                       markersize=12, markeredgecolor='black', label='Impact Point'))
+    if boundary_points:
+        legend_handles.append(plt.Line2D([0], [0], marker='s', color='w', markerfacecolor='#FFD700',
+                                          markersize=10, markeredgecolor='black', label='Phase Boundary'))
     
     ax.legend(handles=legend_handles, loc='upper left', fontsize=9, framealpha=0.9)
     ax.set_xlabel('Longitude', fontsize=11)
@@ -1940,6 +2411,7 @@ def render_launch_trajectory_tool() -> None:
                     output_points,
                     output_sensors,
                     height=500 + (int(st.session_state.launch_trajectory_viz_version) % 2),
+                    mode=latest_output.get("mode", TrajectoryMode.MODE_2D),
                 )
                 
                 # Attribution notice

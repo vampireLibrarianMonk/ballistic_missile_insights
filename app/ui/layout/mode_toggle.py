@@ -45,7 +45,11 @@ def render_mode_toggle() -> None:
     # Mode description
     if is_analyst_mode():
         st.sidebar.info(
-            "**Analyst Mode** exposes additional diagnostic information including:\n"
+            "**Analyst Mode** provides full access to:\n"
+            "- Command Center\n"
+            "- Situational Awareness\n"
+            "- Analytical Tools\n\n"
+            "Additional diagnostic information includes:\n"
             "- Geometry resolution and point density\n"
             "- Processing metrics\n"
             "- Export metadata\n"
@@ -53,10 +57,9 @@ def render_mode_toggle() -> None:
         )
     else:
         st.sidebar.info(
-            "**General User Mode** provides a streamlined interface focused on:\n"
-            "- Inputs and results\n"
-            "- Clean visualizations\n"
-            "- Simple exports"
+            "**General User Mode** provides access to:\n"
+            "- Command Center\n\n"
+            "This mode hides Situational Awareness and Analytical Tools."
         )
     
     st.sidebar.divider()

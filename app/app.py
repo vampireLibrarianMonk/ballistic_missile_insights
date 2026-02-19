@@ -755,21 +755,26 @@ def main() -> None:
     # Render main content
     render_header()
     
-    # Create tabs for different sections
-    tab1, tab2, tab3 = st.tabs([
-        "⚡ Command",
-        "🌍 Situational Awareness",
-        "📊 Analytical Tools",
-    ])
-    
-    with tab1:
-        render_command_center()
+    # Create tabs for different sections (Analyst gets full access)
+    if is_analyst_mode():
+        tab1, tab2, tab3 = st.tabs([
+            "⚡ Command",
+            "🌍 Situational Awareness",
+            "📊 Analytical Tools",
+        ])
+        
+        with tab1:
+            render_command_center()
 
-    with tab2:
-        render_world_map_section()
+        with tab2:
+            render_world_map_section()
 
-    with tab3:
-        render_all_tools()
+        with tab3:
+            render_all_tools()
+    else:
+        tab1, = st.tabs(["⚡ Command"])
+        with tab1:
+            render_command_center()
     
     # Footer
     st.divider()
