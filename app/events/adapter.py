@@ -16,6 +16,7 @@ import io
 import zipfile
 import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlparse
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -60,6 +61,20 @@ KEYWORDS = [
     "warhead",
     "hypersonic",
 ]
+MISSILE_KEYWORDS = {
+    "missile",
+    "ballistic",
+    "rocket",
+    "icbm",
+    "irbm",
+    "srbm",
+    "crbm",
+    "mrbm",
+    "test fire",
+    "nuclear",
+    "warhead",
+    "hypersonic",
+}
 
 MISSILE_STATES = {"USA", "RUS", "CHN", "PRK", "IRN", "ISR", "IND", "PAK"}
 
@@ -141,6 +156,8 @@ class FetchedEvent:
 def contains_keywords(text: str) -> bool:
     """Check if text contains any missile-related keywords."""
     text = text.lower()
+    if "launch" in text and not any(k in text for k in MISSILE_KEYWORDS):
+        return False
     return any(k in text for k in KEYWORDS)
 
 
@@ -239,37 +256,72 @@ def fetch_gdelt_events() -> list[FetchedEvent]:
         
         # Process events
         count = 0
+        seen_urls = set()
         for _, row in df.iterrows():
             if count >= MAX_EVENTS_PER_SOURCE:
                 break
-            
-            # Skip rows without coordinates
-            if pd.isna(row[39]) or pd.isna(row[40]):
-                continue
-            
             # Check for keywords in source URL and other text fields
             text_blob = " ".join(str(row[i]) for i in [57, 58, 60] if i < len(row)).lower()
-            
+
             if not contains_keywords(text_blob):
                 continue
-            
+
+            # Deduplicate by source URL to avoid multiple rows from the same article
+            source_url = str(row[60]) if not pd.isna(row[60]) else None
+            if source_url and source_url in seen_urls:
+                continue
+
             # Extract data
             try:
                 event_date = datetime.strptime(str(int(row[1])), "%Y%m%d").replace(tzinfo=timezone.utc)
             except:
                 event_date = datetime.now(tz=timezone.utc)
-            
-            title = f"GDELT Event {row[0]}"
-            summary = f"Military/missile-related event detected. Location: {row[41]}. Actors: {row[7]} → {row[17]}"
-            
+
+            source_host = None
+            if source_url:
+                try:
+                    source_host = urlparse(source_url).netloc
+                except Exception:
+                    source_host = None
+
+            title = (
+                f"GDELT: {source_host}" if source_host else f"GDELT Event {row[0]}"
+            )
+            summary = (
+                f"Source: {source_url}" if source_url else
+                f"Location: {row[41]}. Actors: {row[7]} → {row[17]}"
+            )
+
             country_code = infer_country_code(text_blob)
             if country_code == "UNK":
                 # Try actor codes
                 actor1 = str(row[7]) if not pd.isna(row[7]) else ""
                 if actor1 in MISSILE_STATES:
                     country_code = actor1
-            
-            lat, lon = float(row[39]), float(row[40])
+
+            lat = None
+            lon = None
+            lat_lon_candidates = [(40, 41), (39, 40), (56, 57)]
+            for lat_idx, lon_idx in lat_lon_candidates:
+                try:
+                    candidate_lat = float(row[lat_idx])
+                    candidate_lon = float(row[lon_idx])
+                except (TypeError, ValueError):
+                    continue
+                if -90 <= candidate_lat <= 90 and -180 <= candidate_lon <= 180:
+                    lat, lon = candidate_lat, candidate_lon
+                    break
+
+            if lat is None or lon is None:
+                row_debug = ", ".join(f"{idx}={row[idx]}" for idx in row.index)
+                print(
+                    f"[GDELT] Skipping event {row[0]}: invalid coordinates "
+                    f"| row=[{row_debug}]"
+                )
+                continue
+
+            if source_url:
+                seen_urls.add(source_url)
             
             events.append(FetchedEvent(
                 id=generate_event_id("GDELT", title, event_date),
@@ -281,7 +333,7 @@ def fetch_gdelt_events() -> list[FetchedEvent]:
                 longitude=lon,
                 event_date=event_date,
                 source="GDELT",
-                source_url=str(row[60]) if not pd.isna(row[60]) else None,
+                source_url=source_url,
                 confidence="medium",
                 tags=["GDELT", "automated"],
             ))

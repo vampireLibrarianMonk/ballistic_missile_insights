@@ -97,8 +97,8 @@
   <!-- ====== Lower-right coordinate system box ====== -->
   <g id="coordinate_box_group" transform="translate(1020,710)">
     <rect id="coordinate_box" x="0" y="0" width="450" height="70" class="thin-border" fill="#efefef"/>
-    <text id="coordinate_line1" x="12" y="28" class="header-text box-text">Coordinate System: Eckert III (world) (Central Meridian 104.0)</text>
-    <text id="coordinate_line2" x="12" y="52" class="header-text box-text">Datum: D WGS 1984</text>
+    <text id="coordinate_line1" x="438" y="28" class="header-text box-text" text-anchor="end">Coordinate System: Eckert III (world) (Central Meridian 104.0)</text>
+    <text id="coordinate_line2" x="438" y="52" class="header-text box-text" text-anchor="end">Datum: D WGS 1984</text>
   </g>
 
   <!-- ====== Attribution block (bottom center, small text) ====== -->

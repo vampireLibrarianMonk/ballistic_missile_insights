@@ -1,7 +1,7 @@
 {
   "metadata": {
-    "name": "Example SRBM Launch",
-    "description": "Sample Short-Range Ballistic Missile trajectory (~800 km range)",
+    "name": "Example SRBM Launch (3D)",
+    "description": "Sample Short-Range Ballistic Missile trajectory (~800 km range) with altitude for 3D mode.",
     "missile_class": "SRBM",
     "estimated_range_km": 800,
     "disclaimer": "This is illustrative sample data for demonstration purposes only"

@@ -294,6 +294,14 @@
 
             const lower = text.toLowerCase().trim();
 
+            if (lower.includes('trajectory') || lower.includes('flight path') || lower.includes('launch path')) {
+                ['mrr-verb', 'mrr-type', 'mrr-prep', 'mrr-location-a', 'mrr-target', 'mrr-location-b'].forEach(id => {
+                    setStatus(id, null, '—');
+                });
+                if (hint) hint.textContent = 'This looks like a Launch Trajectory command. See Launch Trajectory tab.';
+                return;
+            }
+
             if (lower.includes('reverse') || lower.includes('launch envelope')) {
                 ['mrr-verb', 'mrr-type', 'mrr-prep', 'mrr-location-a', 'mrr-target', 'mrr-location-b'].forEach(id => {
                     setStatus(id, null, '—');
@@ -397,16 +405,29 @@
                     }
                 }
             }
-            setStatus('mrr-location-b', locationBStatus, locationB || '—', locationBMatch);
 
             setStatus('mrr-target', targetPrep ? 'exact' : false, targetPrep || '—', targetPrep);
 
-            const allExact = verbMatch && typeMatch && prepMatch && (locationAStatus === 'exact') && targetPrep && (locationBStatus === 'exact');
-            const allValid = verbMatch && typeMatch && prepMatch && locationAMatch && targetPrep && locationBMatch;
+            // Check if both locations are the same (invalid - must be different)
+            const normalizedA = (locationAMatch || (locationA ? locationA.toLowerCase().trim() : '')).toLowerCase();
+            const normalizedB = (locationBMatch || (locationB ? locationB.toLowerCase().trim() : '')).toLowerCase();
+            const sameLocation = normalizedA && normalizedB && normalizedA === normalizedB;
+
+            // If same location, mark Location B as invalid
+            if (sameLocation) {
+                setStatus('mrr-location-b', false, locationB + ' (same as Location A)', null);
+            } else {
+                setStatus('mrr-location-b', locationBStatus, locationB || '—', locationBMatch);
+            }
+
+            const allExact = verbMatch && typeMatch && prepMatch && (locationAStatus === 'exact') && targetPrep && (locationBStatus === 'exact') && !sameLocation;
+            const allValid = verbMatch && typeMatch && prepMatch && locationAMatch && targetPrep && locationBMatch && !sameLocation;
             const hasFuzzy = locationAStatus === 'fuzzy' || locationBStatus === 'fuzzy';
             const partialValid = typeMatch || locationAMatch || locationBMatch;
 
-            if (allExact) {
+            if (sameLocation) {
+                if (hint) hint.textContent = '❌ Location A and Location B must be different! Cannot calculate distance to the same location.';
+            } else if (allExact) {
                 if (hint) hint.textContent = '✅ Query looks valid! Click Execute to proceed.';
             } else if (allValid && hasFuzzy) {
                 if (hint) hint.textContent = '⚠️ Query may work, but check ⚠ items for exact format.';

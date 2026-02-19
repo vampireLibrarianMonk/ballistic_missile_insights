@@ -13,6 +13,10 @@ project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
+# Prevent module name collision when running via `streamlit run app/app.py`
+if "app" in sys.modules and not hasattr(sys.modules["app"], "__path__"):
+    del sys.modules["app"]
+
 import streamlit as st
 
 # Page configuration must be first Streamlit command
@@ -39,7 +43,36 @@ from app.ui.news.news_feed import (
 from app.ui.news.world_map import get_event_color
 
 
-def render_news_filter_panel() -> dict:
+
+def _reset_news_filter_widget_state() -> None:
+    """Reset Streamlit widget state for the *main* news filter panel.
+
+    The filter widgets in `render_news_filter_panel()` persist their values in
+    `st.session_state` using explicit widget keys.
+
+    When we change the underlying dataset (e.g. Load Sample Events) and/or
+    programmatically call `set_news_filters(...)`, those existing widget values
+    can prevent the UI from reflecting the new defaults.
+
+    To avoid Streamlit warnings about providing both `value=` and session_state,
+    we *only delete* the widget keys here (we do NOT set them).
+    """
+
+    widget_keys = [
+        "news_filter_countries_main",
+        "news_filter_event_types_main",
+        "news_filter_weapon_classes_main",
+        "news_filter_sources_main",
+        "news_filter_date_from",
+        "news_filter_date_to",
+    ]
+
+    for widget_key in widget_keys:
+        if widget_key in st.session_state:
+            del st.session_state[widget_key]
+
+
+def render_news_filter_panel(events: list[NewsEvent]) -> dict:
     """
     Render the news filter panel in an expander.
     
@@ -49,6 +82,12 @@ def render_news_filter_panel() -> dict:
     from datetime import datetime, timedelta
     
     filters = get_news_filters()
+    
+    event_dates = [e.event_date.date() for e in events] if events else []
+    auto_min_date = min(event_dates) if event_dates else datetime.now().date()
+    auto_max_date = max(event_dates) if event_dates else datetime.now().date()
+    default_date_from = filters.get("date_from") or auto_min_date
+    default_date_to = filters.get("date_to") or auto_max_date
     
     with st.expander("🔍 Event Filters", expanded=False):
         col1, col2 = st.columns(2)
@@ -107,19 +146,20 @@ def render_news_filter_panel() -> dict:
         with col3:
             date_from = st.date_input(
                 "From Date",
-                value=filters.get("date_from", datetime.now() - timedelta(days=30)),
+                value=default_date_from,
                 key="news_filter_date_from",
             )
         with col4:
             date_to = st.date_input(
                 "To Date",
-                value=filters.get("date_to", datetime.now()),
+                value=default_date_to,
                 key="news_filter_date_to",
             )
         
         # Reset filters button
         if st.button("🔄 Reset Filters", key="news_reset_filters_main"):
             set_news_filters({})
+            _reset_news_filter_widget_state()
             st.rerun()
     
     # Build and return filters
@@ -211,13 +251,24 @@ def render_world_map_with_events(events: list[NewsEvent]) -> None:
     
     # Get map style
     map_style = get_map_style()
+    map_style_url = (
+        "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+        if map_style == "dark"
+        else "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+    )
     
     # Get selected event for highlighting
     selected = get_selected_news_event()
     
-    # Build event data for scatter layer
+    # Build event data for scatter layer (skip invalid coordinates)
+    valid_events = []
     event_data = []
     for event in events:
+        if event.latitude is None or event.longitude is None:
+            continue
+        if not (-90 <= event.latitude <= 90 and -180 <= event.longitude <= 180):
+            continue
+        valid_events.append(event)
         color = get_event_color(event.event_type)
         
         # Highlight selected event
@@ -264,10 +315,10 @@ def render_world_map_with_events(events: list[NewsEvent]) -> None:
             zoom=5,
             pitch=0,
         )
-    elif events:
+    elif valid_events:
         # Center on first event
-        avg_lat = sum(e.latitude for e in events) / len(events)
-        avg_lon = sum(e.longitude for e in events) / len(events)
+        avg_lat = sum(e.latitude for e in valid_events) / len(valid_events)
+        avg_lon = sum(e.longitude for e in valid_events) / len(valid_events)
         view_state = pdk.ViewState(
             latitude=avg_lat,
             longitude=avg_lon,
@@ -287,7 +338,7 @@ def render_world_map_with_events(events: list[NewsEvent]) -> None:
     deck = pdk.Deck(
         layers=[scatter_layer],
         initial_view_state=view_state,
-        map_style=map_style,
+        map_style=map_style_url,
         tooltip={
             "html": """
             <b>{title}</b><br/>
@@ -551,6 +602,8 @@ def render_world_map_section() -> None:
                     events, counts = fetch_live_events()
                     if events:
                         set_loaded_events(events, f"Live Feed ({sum(counts.values())} from {len(counts)} sources)")
+                        set_news_filters({})
+                        _reset_news_filter_widget_state()
                         st.session_state.news_last_fetch_time = datetime.now()
             except Exception as e:
                 st.error(f"Auto-refresh failed: {e}")
@@ -620,6 +673,8 @@ def render_world_map_section() -> None:
                 # Step 7: Final results
                 if events:
                     set_loaded_events(events, f"Live Feed ({sum(counts.values())} from {len(counts)} sources)")
+                    set_news_filters({})
+                    _reset_news_filter_widget_state()
                     
                     # Show detailed source breakdown
                     source_info = "\n".join([f"- **{k}**: {v} events" for k, v in counts.items()])
@@ -647,6 +702,15 @@ def render_world_map_section() -> None:
         if st.button("📋 Load Sample Events", key="load_sample_events"):
             sample_events = create_sample_events()
             set_loaded_events(sample_events, "Sample Data")
+            if sample_events:
+                sample_dates = [event.event_date.date() for event in sample_events]
+                set_news_filters(
+                    {
+                        "date_from": min(sample_dates),
+                        "date_to": max(sample_dates),
+                    }
+                )
+                _reset_news_filter_widget_state()
             st.session_state.news_last_fetch_time = datetime.now()
             st.success(f"✅ Loaded {len(sample_events)} sample events")
             st.rerun()
@@ -662,9 +726,11 @@ def render_world_map_section() -> None:
     render_refresh_timer_display()
     
     st.divider()
+
+    # NOTE: World Events chat/search workflow has been moved into the Command Center.
     
     # Render filter panel
-    filters = render_news_filter_panel()
+    filters = render_news_filter_panel(all_events)
     
     # Apply filters to events
     filtered_events = apply_filters_to_events(all_events, filters) if all_events else []
@@ -676,9 +742,6 @@ def render_world_map_section() -> None:
     
     # Render the live event collection feed
     render_event_collection_feed(filtered_events)
-
-
-
 
 def main() -> None:
     """Main application entry point."""
@@ -692,21 +755,26 @@ def main() -> None:
     # Render main content
     render_header()
     
-    # Create tabs for different sections
-    tab1, tab2, tab3 = st.tabs([
-        "⚡ Command",
-        "🌍 Situational Awareness",
-        "📊 Analytical Tools",
-    ])
-    
-    with tab1:
-        render_command_center()
+    # Create tabs for different sections (Analyst gets full access)
+    if is_analyst_mode():
+        tab1, tab2, tab3 = st.tabs([
+            "⚡ Command",
+            "🌍 Situational Awareness",
+            "📊 Analytical Tools",
+        ])
+        
+        with tab1:
+            render_command_center()
 
-    with tab2:
-        render_world_map_section()
+        with tab2:
+            render_world_map_section()
 
-    with tab3:
-        render_all_tools()
+        with tab3:
+            render_all_tools()
+    else:
+        tab1, = st.tabs(["⚡ Command"])
+        with tab1:
+            render_command_center()
     
     # Footer
     st.divider()

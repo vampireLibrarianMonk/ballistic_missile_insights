@@ -20,6 +20,35 @@ class OutputType(str, Enum):
     REVERSE_RANGE_RING = "reverse_range_ring"
     MINIMUM_RANGE_RING = "minimum_range_ring"
     CUSTOM_POI_RANGE_RING = "custom_poi_range_ring"
+    LAUNCH_TRAJECTORY = "launch_trajectory"
+
+
+class LaunchTrajectoryOutput(BaseModel):
+    """Lightweight output object for Launch Trajectory visualization.
+
+    This is used by Command Center to render the same trajectory visualization
+    experience as the Analytical Tool (map + exports), without forcing it into
+    the RangeRingOutput schema.
+    """
+
+    output_id: UUID = Field(default_factory=uuid4, description="Unique output identifier")
+    output_type: OutputType = Field(default=OutputType.LAUNCH_TRAJECTORY, description="Type of analytical output")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
+
+    title: str = Field(..., description="Display title")
+    description: Optional[str] = Field(None, description="Description")
+
+    origin_name: str = Field(..., description="Origin (display)")
+    destination_name: str = Field(..., description="Destination (display)")
+    origin_latitude: float = Field(..., description="Origin latitude")
+    origin_longitude: float = Field(..., description="Origin longitude")
+    destination_latitude: float = Field(..., description="Destination latitude")
+    destination_longitude: float = Field(..., description="Destination longitude")
+    distance_km: Optional[float] = Field(None, description="Great-circle distance in km")
+
+    # Data payload used by Launch Trajectory tool
+    points: list[dict[str, Any]] = Field(default_factory=list, description="Trajectory points")
+    sensors: list[dict[str, Any]] = Field(default_factory=list, description="Sensor sources")
 
 
 class GeometryType(str, Enum):

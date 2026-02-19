@@ -382,6 +382,20 @@ def clear_trajectory_state() -> None:
     st.session_state.launch_trajectory_pitch = 45.0
     st.session_state.launch_trajectory_bearing = 0.0
 
+    # Reset tool-local metadata (used by export titles and UI banners)
+    st.session_state.launch_trajectory_data_loaded = False
+    st.session_state.launch_trajectory_file_metadata = {}
+    # Clear file-level metadata caches
+    if "launch_trajectory_uploaded_file" in st.session_state:
+        st.session_state.launch_trajectory_uploaded_file = None
+    if "launch_trajectory_file_metadata" in st.session_state:
+        st.session_state.launch_trajectory_file_metadata = {}
+
+    # Bump a visualization render version so embedded pydeck map fully resets.
+    if "launch_trajectory_viz_version" not in st.session_state:
+        st.session_state.launch_trajectory_viz_version = 0
+    st.session_state.launch_trajectory_viz_version += 1
+
 
 def clear_trajectory_outputs() -> None:
     """Clear only the trajectory outputs, preserving input state."""

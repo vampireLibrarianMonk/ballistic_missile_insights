@@ -21,16 +21,84 @@ const ORRG_VALIDATION = {
     validFromPreps: ['from', 'within', 'inside', 'for', 'between'],
     validMinimumTypes: ['minimum range ring', 'minimum distance', 'min distance', 'min range'],
     validMultipleTypes: ['multiple range rings', 'multiple range ring', 'multiple rings'],
+    validCustomPoiTypes: ['custom poi', 'custom point', 'point of interest', 'poi'],
+    validCustomPoiUnits: ['km', 'mi'],
     validMultipleUnits: ['km', 'mi', 'nm'],
     validMinimumPreps: ['between', 'from'],
     validMinimumTargets: ['and', 'to'],
     validTargetPreps: ['against', 'to', 'toward', 'towards'],
+
+    // Launch trajectory
+    validTrajectoryTypes: ['launch trajectory', 'trajectory', 'flight path', 'launch path'],
+    validTrajectoryFromPreps: ['from'],
+    validTrajectoryToPreps: ['to', 'toward', 'towards'],
+
+    // World Events (2-step workflow)
+    validWorldEventsPrefix: 'show me events over the last',
+    // Accept singular or plural
+    validWorldEventsUnits: ['hour', 'hours', 'day', 'days', 'week', 'weeks', 'month', 'months', 'year', 'years'],
+    validWorldEventsDomains: ['missile', 'nuclear'],
+    validWorldEventsActivities: ['tests', 'exercises', 'combat activity', 'deployment'],
+    validWorldEventsDatasets: ['live', 'sample', 'current'],
     
     // These are populated by Python at injection time
     validCountries: {{COUNTRIES_JSON}},
+    validCountryCodes: {{COUNTRY_CODES_JSON}},
     validCities: {{CITIES_JSON}},
     countriesDisplay: {{COUNTRIES_DISPLAY_JSON}},
     citiesDisplay: {{CITIES_DISPLAY_JSON}},
+
+    // Common aliases (should roughly mirror Python-side parsing)
+    worldEventsCountryAliases: {
+        'north korea': 'korea, north',
+        'south korea': 'korea, south',
+        'united states': 'united states of america',
+        'usa': 'united states of america',
+        'uk': 'united kingdom',
+        'russia': 'russian federation',
+    },
+
+    // Lightweight edit-distance for World Events country fuzzy matching
+    // (used only when input is long enough to be a plausible typo rather than an abbreviation)
+    levenshteinDistance: function(a, b) {
+        if (a === b) return 0;
+        if (!a) return b.length;
+        if (!b) return a.length;
+        const m = a.length;
+        const n = b.length;
+        const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+        for (let i = 0; i <= m; i++) dp[i][0] = i;
+        for (let j = 0; j <= n; j++) dp[0][j] = j;
+        for (let i = 1; i <= m; i++) {
+            for (let j = 1; j <= n; j++) {
+                const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+                dp[i][j] = Math.min(
+                    dp[i - 1][j] + 1,
+                    dp[i][j - 1] + 1,
+                    dp[i - 1][j - 1] + cost
+                );
+            }
+        }
+        return dp[m][n];
+    },
+
+    // Return true if input is a plausible typo for a real country name.
+    // We intentionally DO NOT accept short prefixes like "Chin" for "China".
+    isPlausibleCountryTypo: function(input, validCountriesLower) {
+        if (!input) return false;
+        const s = input.toLowerCase().trim();
+        // Require length >= 5 to avoid accepting abbreviations.
+        if (s.length < 5) return false;
+        let best = Infinity;
+        for (const opt of validCountriesLower) {
+            // Quick guard: first letter should match to reduce false positives.
+            if (!opt || opt[0] !== s[0]) continue;
+            const d = this.levenshteinDistance(s, opt);
+            if (d < best) best = d;
+            if (best === 1) break;
+        }
+        return best <= 2;
+    },
     
     // ============================================================
     // Shared status messages (used by status bar and validators)
@@ -62,6 +130,9 @@ const ORRG_VALIDATION = {
         singleFormat: 'Format: Generate a single range ring from [Country]',
         minimumFormat: 'Format: Calculate minimum distance between [Location A] and [Location B]',
         multipleFormat: 'Format: Generate multiple range rings from [Country] at [distances] [unit]. The respective missile names are [names].',
+
+        // World Events
+        worldEventsFormat: 'Format: Show me events over the last [#] [hour(s)|day(s)|week(s)|month(s)|year(s)] for [country name or ISO3] concerning [missile|nuclear] [tests|exercises|combat activity|deployment].',
         
         // Unrecognized/query states
         unrecognized: 'Command pattern not recognized',
@@ -76,7 +147,113 @@ const ORRG_VALIDATION = {
         // Redirect messages
         reverseRedirect: 'This looks like a Reverse Range Ring command. See Reverse Range Ring tab.',
         singleRedirect: 'This looks like a Single Range Ring command. See Single Range Ring tab.',
-        minimumRedirect: 'This looks like a Minimum Range Ring command. See Minimum Range Ring tab.'
+        minimumRedirect: 'This looks like a Minimum Range Ring command. See Minimum Range Ring tab.',
+        customPoiRedirect: 'This looks like a Custom POI command. See Custom POI tab.',
+        trajectoryRedirect: 'This looks like a Launch Trajectory command. See Launch Trajectory tab.'
+    },
+
+    // ============================================================
+    // Validate World Events search command (progressive)
+    // ============================================================
+    validateWorldEvents: function(lower) {
+        const self = this;
+
+        // Progressive check markers
+        const checks = {
+            prefix: false,
+            qty: false,
+            unit: false,
+            forKw: false,
+            country: false,
+            concerningKw: false,
+            domain: false,
+            activity: false,
+            dataset: null,
+        };
+
+        const normalized = (lower || '').trim();
+        checks.prefix = normalized.startsWith(self.validWorldEventsPrefix);
+        checks.forKw = normalized.includes(' for ');
+        checks.concerningKw = normalized.includes(' concerning ');
+        // dataset hint is optional and not required
+
+        // Pull quantity
+        const qtyMatch = normalized.match(/show me events over the last\s+(\d+)/);
+        if (qtyMatch) {
+            const qty = parseInt(qtyMatch[1], 10);
+            checks.qty = !isNaN(qty) && qty > 0;
+        }
+
+        // Pull unit
+        const unitMatch = normalized.match(/show me events over the last\s+(?:\d+\s+)?(hour|hours|day|days|week|weeks|month|months|year|years)\b/);
+        if (unitMatch) {
+            const unit = unitMatch[1];
+            checks.unit = self.validWorldEventsUnits.includes(unit);
+        }
+
+        // If the user didn't provide a number, assume quantity=1 when a unit is present.
+        // Example: "over the last day".
+        if (!checks.qty && checks.unit) {
+            checks.qty = true;
+        }
+
+        // Pull country (ISO3 or name)
+        // Prefer parsing between "for" and "concerning" so multi-word names work.
+        let countryToken = null;
+        const betweenMatch = normalized.match(/\bfor\s+(.+?)\s+concerning\b/);
+        if (betweenMatch) {
+            countryToken = (betweenMatch[1] || '').trim().replace(/\.$/, '');
+        } else {
+            const fallbackMatch = normalized.match(/\bfor\s+([^\s.]+)\b/);
+            if (fallbackMatch) countryToken = (fallbackMatch[1] || '').trim().replace(/\.$/, '');
+        }
+
+        if (countryToken) {
+            // Apply alias mapping first
+            const alias = self.worldEventsCountryAliases[countryToken.toLowerCase()];
+            if (alias) countryToken = alias;
+
+            // ISO3
+            if (/^[a-z]{3}$/.test(countryToken)) {
+                checks.country = self.validCountryCodes.includes(countryToken);
+            } else {
+                // Country name (exact; allow fuzzy ONLY for plausible typos)
+                const exact = self.validCountries.includes(countryToken.toLowerCase());
+                if (exact) {
+                    checks.country = true;
+                } else {
+                    checks.country = self.isPlausibleCountryTypo(countryToken, self.validCountries);
+                }
+            }
+        }
+
+        // Pull domain and activity
+        const domainMatch = normalized.match(/\bconcerning\s+(missile|nuclear)\b/);
+        if (domainMatch) {
+            checks.domain = self.validWorldEventsDomains.includes(domainMatch[1]);
+        }
+
+        const activityMatch = normalized.match(/\b(missile|nuclear)\s+(tests|exercises|combat activity|deployment)\b/);
+        if (activityMatch) {
+            const activity = activityMatch[2];
+            checks.activity = self.validWorldEventsActivities.includes(activity);
+        }
+
+        const datasetMatch = normalized.match(/\bfrom\s+(live|sample|current)\s+events?\b/);
+        if (datasetMatch) {
+            const ds = datasetMatch[1];
+            checks.dataset = self.validWorldEventsDatasets.includes(ds) ? 'exact' : false;
+        }
+
+        const allExact = checks.prefix && checks.qty && checks.unit && checks.forKw && checks.country && checks.concerningKw && checks.domain && checks.activity;
+        const partialValid = checks.prefix || checks.forKw || checks.concerningKw;
+
+        return {
+            toolName: 'World Events',
+            checks,
+            allExact,
+            partialValid,
+        };
     },
     
     // ============================================================
@@ -297,15 +474,20 @@ const ORRG_VALIDATION = {
             }
         }
         
+        // Check if both locations are the same (invalid - must be different)
+        const normalizedA = (locationAMatch || (locationA ? locationA.toLowerCase().trim() : '')).toLowerCase();
+        const normalizedB = (locationBMatch || (locationB ? locationB.toLowerCase().trim() : '')).toLowerCase();
+        const sameLocation = normalizedA && normalizedB && normalizedA === normalizedB;
+
         const allExact = (
-            verbMatch && typeMatch && prepMatch && (locationAStatus === 'exact') && targetPrep && (locationBStatus === 'exact')
+            verbMatch && typeMatch && prepMatch && (locationAStatus === 'exact') && targetPrep && (locationBStatus === 'exact') && !sameLocation
         );
-        const allValid = verbMatch && typeMatch && prepMatch && locationAMatch && targetPrep && locationBMatch;
+        const allValid = verbMatch && typeMatch && prepMatch && locationAMatch && targetPrep && locationBMatch && !sameLocation;
         const hasFuzzy = locationAStatus === 'fuzzy' || locationBStatus === 'fuzzy';
         const partialValid = typeMatch || locationAMatch || locationBMatch;
         
         return {
-            allExact, allValid, hasFuzzy, partialValid, toolName: 'Minimum Range Ring',
+            allExact, allValid, hasFuzzy, partialValid, sameLocation, toolName: 'Minimum Range Ring',
             verbMatch, typeMatch, prepMatch, targetPrep,
             locationA, locationB, locationAStatus, locationBStatus, locationAMatch, locationBMatch
         };
@@ -412,6 +594,106 @@ const ORRG_VALIDATION = {
             distancesStatus
         };
     },
+
+    // ============================================================
+    // Validate Launch Trajectory command (syntactic)
+    // Examples:
+    // - "Show launch trajectory from Pyongyang to Tokyo"
+    // - "Visualize trajectory from Tehran to Tel Aviv"
+    // ============================================================
+    validateTrajectory: function(lower) {
+        const self = this;
+        const verbMatch = self.validVerbs.find(v => lower.startsWith(v))
+            || (lower.startsWith('visualize') ? 'visualize' : null)
+            || (lower.startsWith('plot') ? 'plot' : null);
+
+        const typeMatch = self.validTrajectoryTypes.find(t => lower.includes(t));
+
+        // Expect "from <origin> to <destination>"
+        let fromMatch = null;
+        let toMatch = null;
+        let origin = null;
+        let destination = null;
+
+        if (typeMatch) {
+            const typeEnd = lower.indexOf(typeMatch) + typeMatch.length;
+            const afterType = lower.substring(typeEnd);
+            const fromRegex = /\bfrom\b\s*(.*)/;
+            const fromRegexMatch = afterType.match(fromRegex);
+            if (fromRegexMatch) {
+                fromMatch = 'from';
+                const afterFrom = (fromRegexMatch[1] || '');
+
+                // Progressive: allow just "from ..." without destination yet
+                for (const tp of self.validTrajectoryToPreps) {
+                    const tpWithSpaces = ' ' + tp + ' ';
+                    const tpIdx = afterFrom.indexOf(tpWithSpaces);
+                    const afterFromTrimmed = afterFrom.trimEnd();
+                    const tpAtEnd = ' ' + tp;
+                    const endsWithPrep = afterFromTrimmed.endsWith(tpAtEnd);
+                    const tpEndIdx = endsWithPrep ? afterFromTrimmed.lastIndexOf(tpAtEnd) : -1;
+
+                    if (tpIdx >= 0) {
+                        toMatch = tp;
+                        origin = afterFrom.substring(0, tpIdx).trim();
+                        destination = afterFrom.substring(tpIdx + tp.length + 2).trim().replace(/\.$/, '');
+                        break;
+                    } else if (tpEndIdx >= 0) {
+                        toMatch = tp;
+                        origin = afterFromTrimmed.substring(0, tpEndIdx).trim();
+                        destination = '';
+                        break;
+                    }
+                }
+
+                if (!toMatch && afterFrom.trim()) {
+                    origin = afterFrom.replace(/\.$/, '').trim();
+                }
+            }
+        }
+
+        // Origin/destination can be country or city; we reuse those lists for exact/fuzzy
+        const locationOptions = [...self.validCountries, ...self.validCities];
+        let originStatus = false;
+        let destinationStatus = destination ? false : null;
+        let originMatch = null;
+        let destinationMatch = null;
+
+        if (origin) {
+            const originLower = origin.toLowerCase();
+            if (locationOptions.includes(originLower)) {
+                originStatus = 'exact';
+                originMatch = originLower;
+            } else {
+                originMatch = self.fuzzyMatch(origin, locationOptions);
+                if (originMatch) originStatus = 'fuzzy';
+            }
+        }
+
+        if (destination) {
+            const destLower = destination.toLowerCase();
+            if (locationOptions.includes(destLower)) {
+                destinationStatus = 'exact';
+                destinationMatch = destLower;
+            } else {
+                destinationMatch = self.fuzzyMatch(destination, locationOptions);
+                if (destinationMatch) destinationStatus = 'fuzzy';
+            }
+        }
+
+        const allExact = !!verbMatch && !!typeMatch && !!fromMatch && (originStatus === 'exact') && !!toMatch && (destinationStatus === 'exact');
+        const allValid = !!verbMatch && !!typeMatch && !!fromMatch && !!originMatch && !!toMatch && !!destinationMatch;
+        const hasFuzzy = originStatus === 'fuzzy' || destinationStatus === 'fuzzy';
+        const partialValid = !!typeMatch || !!originMatch || !!destinationMatch;
+
+        return {
+            allExact, allValid, hasFuzzy, partialValid, toolName: 'Launch Trajectory',
+            verbMatch, typeMatch, fromMatch, toMatch,
+            origin, destination,
+            originStatus, destinationStatus,
+            originMatch, destinationMatch
+        };
+    },
     
     // ============================================================
     // Detect command type from input
@@ -421,8 +703,128 @@ const ORRG_VALIDATION = {
         const hasMinimum = lower.includes('minimum') || lower.includes('min distance') || lower.includes('minimum distance');
         const hasMultiple = lower.includes('multiple');
         const hasSingle = (lower.includes('single') || lower.includes('range ring')) && !hasReverse && !hasMinimum && !hasMultiple;
+        const hasCustomPoi = lower.includes('poi') || lower.includes('point of interest') || lower.includes('custom poi');
+        const hasTrajectory = lower.includes('trajectory') || lower.includes('flight path') || lower.includes('launch path');
+        const hasWorldEvents = lower.startsWith('show me events over the last')
+            || lower.includes('daily event summary')
+            || lower.includes('daily intel report');
         const hasVerb = /^(generate|create|build|show|calculate|compute)/i.test(lower);
-        return { hasReverse, hasSingle, hasMinimum, hasMultiple, hasVerb };
+        return { hasReverse, hasSingle, hasMinimum, hasMultiple, hasCustomPoi, hasTrajectory, hasWorldEvents, hasVerb };
+    },
+
+    // ============================================================
+    // Validate Custom POI command (lightweight syntactic check)
+    // ============================================================
+    validateCustomPoi: function(lower) {
+        const self = this;
+        const typeMatch = self.validCustomPoiTypes.find(t => lower.includes(t));
+
+        // Strip leading label like "custom poi(s):" before splitting
+        const cleaned = lower.replace(/^\s*custom\s+poi[s]?:\s*/, '');
+        // Split groups by semicolon/newline/brackets
+        const groups = cleaned.split(/;|\n|\]\s*\[|\[|\]/).map(g => g.trim()).filter(Boolean);
+        const poiResults = [];
+        let anyError = false;
+        let anyFuzzy = false;
+        let poiCount = 0;
+
+        groups.forEach((g, idx) => {
+            // Try to capture name (optional) + lat lon + range(s) + unit
+            const regex = /([a-zA-Z\s']+)?\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)(?:\s+(\d+(?:\.\d+)?)(?:\s*-\s*(\d+(?:\.\d+)?))?)?\s*(km|mi)?/;
+            const m = g.match(regex);
+            if (!m) {
+                // Allow partial lat/lon pairs without ranges to stay fuzzy instead of error so we don't discard other POIs
+                const fallback = g.match(/([a-zA-Z\s']+)?\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/);
+                if (fallback) {
+                    const name = (fallback[1] || `POI ${idx + 1}`).trim();
+                    const lat = parseFloat(fallback[2]);
+                    const lon = parseFloat(fallback[3]);
+                    poiResults.push({
+                        status: 'error',
+                        message: `POI ${idx + 1}: range required (max or min-max)`,
+                        name,
+                        lat,
+                        lon,
+                        minRange: null,
+                        maxRange: null,
+                        unit: null,
+                    });
+                    anyError = true;
+                    return;
+                }
+                poiResults.push({ status: 'error', message: `POI ${idx + 1}: could not parse lat/lon/range`, raw: g });
+                anyError = true;
+                return;
+            }
+
+            const name = (m[1] || `POI ${idx + 1}`).trim();
+            const lat = parseFloat(m[2]);
+            const lon = parseFloat(m[3]);
+            const r1 = m[4] ? parseFloat(m[4]) : null;
+            const r2 = m[5] ? parseFloat(m[5]) : null;
+            const unit = m[6] ? m[6].toLowerCase() : null;
+
+            let minRange = 0;
+            let maxRange = null;
+            if (r1 !== null && r2 !== null) {
+                minRange = r1;
+                maxRange = r2;
+            } else if (r1 !== null) {
+                minRange = 0;
+                maxRange = r1;
+            }
+
+            let status = 'exact';
+            const msgs = [];
+
+            if (maxRange === null || isNaN(maxRange)) {
+                status = 'error';
+                msgs.push('range required (max or min-max)');
+            }
+            if (!(unit && self.validCustomPoiUnits.includes(unit))) {
+                status = 'error';
+                msgs.push('unit required (km or mi)');
+            }
+            if (maxRange === null || isNaN(maxRange) || maxRange <= 0) {
+                status = 'error';
+                msgs.push('max range must be > 0');
+            }
+            if (minRange < 0) {
+                status = 'error';
+                msgs.push('min range cannot be negative');
+            }
+            if (minRange > 0 && maxRange !== null && maxRange <= minRange) {
+                status = 'error';
+                msgs.push('max range must exceed min range');
+            }
+            if (lat < -90 || lat > 90) {
+                status = 'error';
+                msgs.push('lat must be between -90 and 90');
+            }
+            if (lon < -180 || lon > 180) {
+                status = 'error';
+                msgs.push('lon must be between -180 and 180');
+            }
+            if (maxRange !== null && maxRange > 20000 && status !== 'error') {
+                status = 'fuzzy';
+                msgs.push('max range very large; verify');
+            }
+
+            if (status === 'fuzzy') anyFuzzy = true;
+            if (status === 'error') anyError = true;
+
+            poiCount += 1;
+            poiResults.push({ status, name, lat, lon, minRange, maxRange, unit, messages: msgs });
+        });
+
+        const allExact = !anyError && !anyFuzzy && poiResults.length > 0 && !!typeMatch;
+        const allValid = !anyError && poiResults.length > 0 && !!typeMatch;
+        const hasFuzzy = anyFuzzy;
+        const partialValid = typeMatch || poiResults.length > 0;
+
+        const mode = poiCount > 1 ? 'Multiple' : 'Single';
+
+        return { allExact, allValid, hasFuzzy, partialValid, toolName: 'Custom POI', poiResults, typeMatch, mode, poiCount };
     },
     
     // ============================================================

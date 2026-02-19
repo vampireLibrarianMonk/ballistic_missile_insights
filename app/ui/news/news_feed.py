@@ -77,8 +77,13 @@ class NewsEvent:
     tags: list[str] = None
     
     def __post_init__(self):
+        from datetime import timezone
+
         if self.tags is None:
             self.tags = []
+
+        if isinstance(self.event_date, datetime) and self.event_date.tzinfo is not None:
+            self.event_date = self.event_date.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def get_event_type_icon(event_type: EventType) -> str:

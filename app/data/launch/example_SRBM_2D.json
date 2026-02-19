@@ -1,0 +1,279 @@
+{
+  "metadata": {
+    "name": "Example SRBM Launch (2D)",
+    "description": "Sample SRBM trajectory for 2D mode (altitude omitted).",
+    "missile_class": "SRBM",
+    "estimated_range_km": 800,
+    "disclaimer": "This is illustrative sample data for demonstration purposes only"
+  },
+  "sensors": [
+    {
+      "sensor_id": "DSP-F21",
+      "name": "DSP-F21 (Space-Based IR)",
+      "sensor_class": "space-based",
+      "detection_phase": "boost",
+      "description": "Defense Support Program space-based infrared missile launch detection",
+      "bibliography": [
+        {
+          "authoring_organization": "U.S. Space Force",
+          "title": "Defense Support Program Satellites",
+          "document_type": "Fact Sheet",
+          "description": "Official public fact sheet describing the Defense Support Program satellite constellation, including its space-based infrared missile launch detection mission and geosynchronous orbit.",
+          "publisher": "U.S. Space Force",
+          "publication_status": "Publicly releasable",
+          "url": "https://www.spaceforce.mil/about-us/fact-sheets/article/2197774/defense-support-program-satellites/",
+          "last_updated": "October 2020",
+          "supports_claims": [
+            "DSP satellites are space-based",
+            "DSP satellites use infrared sensors",
+            "DSP detects missile launches",
+            "DSP provides early warning",
+            "DSP satellites operate in geosynchronous orbit"
+          ]
+        }
+      ]
+    },
+    {
+      "sensor_id": "SSPARS-CLEAR",
+      "name": "SSPARS (Solid State Phased Array Radar System)",
+      "sensor_class": "ground-based",
+      "detection_phase": "midcourse",
+      "description": "AN/FPS-123 Solid State Phased Array Radar System used for ballistic missile early warning and space surveillance",
+      "bibliography": [
+        {
+          "author": "Winkler, David F.",
+          "title": "The Coldest Front: Cold War Military Properties in Alaska",
+          "document_type": "Historical Monograph",
+          "publisher": "U.S. Government",
+          "publication_status": "Publicly releasable",
+          "url": "https://dnr.alaska.gov/parks/oha/publications/coldestfront.pdf",
+          "description": "Documents the Solid State Phased Array Radar System (SSPARS) at Clear Air Force Station, including its role as an AN/FPS-123 phased array radar supporting ballistic missile early warning and space surveillance.",
+          "supports_claims": [
+            "SSPARS is a ground-based radar system",
+            "SSPARS supports ballistic missile early warning",
+            "SSPARS provides midcourse tracking and space surveillance"
+          ]
+        }
+      ]
+    },
+    {
+      "sensor_id": "AEGIS-DDG71",
+      "name": "USS Ross (DDG-71) SPY-1D",
+      "sensor_class": "maritime",
+      "detection_phase": "midcourse",
+      "description": "Aegis Combat System SPY-1D maritime phased-array radar",
+      "bibliography": [
+        {
+          "authoring_organization": "Missile Defense Agency",
+          "title": "Aegis Ballistic Missile Defense",
+          "document_type": "Fact Sheet",
+          "publisher": "Missile Defense Agency",
+          "publication_status": "Publicly releasable",
+          "url": "https://www.dote.osd.mil/Portals/97/pub/reports/FY2012/bmds/2012aegisbmd.pdf?ver=2019-08-22-111711-393",
+          "description": "Official public fact sheet describing the Aegis Ballistic Missile Defense system, including the sea-based Aegis Combat System and SPY-1 phased-array radar used for ballistic missile detection, tracking, and midcourse defense.",
+          "supports_claims": [
+            "Aegis is a maritime-based missile defense system",
+            "SPY-1 is a shipboard phased-array radar",
+            "Aegis supports ballistic missile detection and tracking during the midcourse phase",
+            "Aegis integrates with the U.S. ballistic missile defense architecture"
+          ]
+        }
+      ]
+    },
+    {
+      "sensor_id": "THAAD-AN-TPY2",
+      "name": "THAAD AN/TPY-2 Battery",
+      "sensor_class": "ground-based",
+      "detection_phase": "terminal",
+      "description": "Terminal High Altitude Area Defense AN/TPY-2 X-band radar",
+      "bibliography": [
+        {
+          "authoring_organization": "Missile Defense Agency",
+          "title": "Terminal High Altitude Area Defense (THAAD)",
+          "document_type": "Fact Sheet",
+          "publisher": "Missile Defense Agency",
+          "publication_status": "Publicly releasable",
+          "url": "",
+          "description": "Official public fact sheet describing the Terminal High Altitude Area Defense (THAAD) system, including the ground-based AN/TPY-2 X-band radar used to detect, track, and support engagement of ballistic missiles during the terminal phase of flight.",
+          "supports_claims": [
+            "THAAD is a ground-based missile defense system",
+            "AN/TPY-2 is an X-band radar associated with THAAD",
+            "THAAD supports ballistic missile detection and tracking in the terminal phase",
+            "THAAD is part of the U.S. ballistic missile defense architecture"
+          ]
+        }
+      ]
+    }
+  ],
+  "points": [
+    {
+      "sequence_index": 0,
+      "timestamp": "2026-01-15T08:00:00.000Z",
+      "latitude": 39.15,
+      "longitude": 127.45,
+      "velocity": 0,
+      "phase": "boost",
+      "sensor_id": "DSP-F21",
+      "notes": "Launch detected - ignition signature"
+    },
+    {
+      "sequence_index": 1,
+      "timestamp": "2026-01-15T08:00:05.000Z",
+      "latitude": 39.156,
+      "longitude": 127.52,
+      "velocity": 850,
+      "phase": "boost",
+      "sensor_id": "DSP-F21"
+    },
+    {
+      "sequence_index": 2,
+      "timestamp": "2026-01-15T08:00:10.000Z",
+      "latitude": 39.165,
+      "longitude": 127.65,
+      "velocity": 1450,
+      "phase": "boost",
+      "sensor_id": "DSP-F21"
+    },
+    {
+      "sequence_index": 3,
+      "timestamp": "2026-01-15T08:00:15.000Z",
+      "latitude": 39.18,
+      "longitude": 127.82,
+      "velocity": 1950,
+      "phase": "boost",
+      "sensor_id": "DSP-F21"
+    },
+    {
+      "sequence_index": 4,
+      "timestamp": "2026-01-15T08:00:20.000Z",
+      "latitude": 39.2,
+      "longitude": 128.05,
+      "velocity": 2350,
+      "phase": "boost",
+      "sensor_id": "DSP-F21",
+      "notes": "Burnout - IR signature diminishing"
+    },
+    {
+      "sequence_index": 5,
+      "timestamp": "2026-01-15T08:00:30.000Z",
+      "latitude": 39.25,
+      "longitude": 128.4,
+      "velocity": 2450,
+      "phase": "midcourse",
+      "sensor_id": "SSPARS-CLEAR",
+      "notes": "Radar acquisition - track initiated"
+    },
+    {
+      "sequence_index": 6,
+      "timestamp": "2026-01-15T08:00:45.000Z",
+      "latitude": 39.33,
+      "longitude": 128.9,
+      "velocity": 2500,
+      "phase": "midcourse",
+      "sensor_id": "SSPARS-CLEAR"
+    },
+    {
+      "sequence_index": 7,
+      "timestamp": "2026-01-15T08:01:00.000Z",
+      "latitude": 39.43,
+      "longitude": 129.5,
+      "velocity": 2520,
+      "phase": "midcourse",
+      "sensor_id": "AEGIS-DDG71",
+      "notes": "Naval radar handoff"
+    },
+    {
+      "sequence_index": 8,
+      "timestamp": "2026-01-15T08:01:15.000Z",
+      "latitude": 39.55,
+      "longitude": 130.2,
+      "velocity": 2510,
+      "phase": "midcourse",
+      "sensor_id": "AEGIS-DDG71"
+    },
+    {
+      "sequence_index": 9,
+      "timestamp": "2026-01-15T08:01:30.000Z",
+      "latitude": 39.69,
+      "longitude": 131,
+      "velocity": 2480,
+      "phase": "midcourse",
+      "sensor_id": "AEGIS-DDG71",
+      "notes": "Apogee reached"
+    },
+    {
+      "sequence_index": 10,
+      "timestamp": "2026-01-15T08:01:45.000Z",
+      "latitude": 39.84,
+      "longitude": 131.85,
+      "velocity": 2520,
+      "phase": "midcourse",
+      "sensor_id": "AEGIS-DDG71"
+    },
+    {
+      "sequence_index": 11,
+      "timestamp": "2026-01-15T08:02:00.000Z",
+      "latitude": 40,
+      "longitude": 132.75,
+      "velocity": 2650,
+      "phase": "midcourse",
+      "sensor_id": "SSPARS-CLEAR"
+    },
+    {
+      "sequence_index": 12,
+      "timestamp": "2026-01-15T08:02:15.000Z",
+      "latitude": 40.17,
+      "longitude": 133.7,
+      "velocity": 2850,
+      "phase": "terminal",
+      "sensor_id": "THAAD-AN-TPY2",
+      "notes": "Terminal phase - THAAD acquisition"
+    },
+    {
+      "sequence_index": 13,
+      "timestamp": "2026-01-15T08:02:25.000Z",
+      "latitude": 40.29,
+      "longitude": 134.45,
+      "velocity": 3100,
+      "phase": "terminal",
+      "sensor_id": "THAAD-AN-TPY2"
+    },
+    {
+      "sequence_index": 14,
+      "timestamp": "2026-01-15T08:02:35.000Z",
+      "latitude": 40.4,
+      "longitude": 135.15,
+      "velocity": 3350,
+      "phase": "terminal",
+      "sensor_id": "THAAD-AN-TPY2"
+    },
+    {
+      "sequence_index": 15,
+      "timestamp": "2026-01-15T08:02:42.000Z",
+      "latitude": 40.47,
+      "longitude": 135.65,
+      "velocity": 3500,
+      "phase": "terminal",
+      "sensor_id": "THAAD-AN-TPY2"
+    },
+    {
+      "sequence_index": 16,
+      "timestamp": "2026-01-15T08:02:48.000Z",
+      "latitude": 40.52,
+      "longitude": 136.05,
+      "velocity": 3600,
+      "phase": "terminal",
+      "sensor_id": "THAAD-AN-TPY2"
+    },
+    {
+      "sequence_index": 17,
+      "timestamp": "2026-01-15T08:02:52.000Z",
+      "latitude": 40.55,
+      "longitude": 136.35,
+      "velocity": 3650,
+      "phase": "terminal",
+      "sensor_id": "THAAD-AN-TPY2",
+      "notes": "Impact point"
+    }
+  ]
+}

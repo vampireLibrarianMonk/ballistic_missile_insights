@@ -35,9 +35,9 @@ def render_news_world_map(events: list[NewsEvent]) -> None:
     # Get map style
     map_style = get_map_style()
     if map_style == "dark":
-        map_style_url = "mapbox://styles/mapbox/dark-v10"
+        map_style_url = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
     else:
-        map_style_url = "mapbox://styles/mapbox/light-v10"
+        map_style_url = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
     
     # Get selected event for highlighting
     selected = get_selected_news_event()

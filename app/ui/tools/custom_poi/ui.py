@@ -13,13 +13,12 @@ from app.models.inputs import (
     DistanceUnit,
     PointOfInterest,
 )
-from app.rendering.pydeck_adapter import render_range_ring_output
 from app.ui.layout.global_state import (
-    is_analyst_mode,
     get_map_style,
     add_tool_output,
     get_tool_state,
     clear_tool_outputs,
+    bump_tool_viz_version,
 )
 from app.ui.tools.custom_poi.state import (
     get_custom_pois,
@@ -32,10 +31,10 @@ from app.ui.tools.custom_poi.state import (
     increment_form_version,
     get_prefill_data,
     set_prefill_data,
+    reset_custom_poi_state,
 )
 from app.ui.tools.shared import (
-    render_map_with_legend,
-    render_export_controls,
+    render_output_panel,
 )
 
 
@@ -251,7 +250,27 @@ def render_custom_poi_tool() -> None:
         st.markdown("**Generation Settings:**")
         resolution = st.selectbox("Resolution", options=["low", "normal", "high"], index=1, key="custom_resolution")
         
-        if st.button("🚀 Generate POI Rings", key="custom_generate"):
+        action_col1, action_col2 = st.columns(2)
+        with action_col1:
+            generate_clicked = st.button("🚀 Generate POI Rings", key="custom_generate", use_container_width=True)
+        with action_col2:
+            if st.button("🔄 Reset Tool", key="custom_reset_tool", use_container_width=True):
+                # Reset persisted POIs + outputs
+                reset_custom_poi_state()
+                bump_tool_viz_version("custom_poi_range_ring")
+
+                # Also clear widget keys so the UI returns to initial defaults
+                widget_keys = [
+                    "custom_poi_radio",
+                    "custom_resolution",
+                ]
+                for k in widget_keys:
+                    if k in st.session_state:
+                        del st.session_state[k]
+
+                st.rerun()
+
+        if generate_clicked:
             if not custom_pois:
                 st.warning("Please add at least one POI.")
                 return
@@ -277,6 +296,7 @@ def render_custom_poi_tool() -> None:
                     
                     clear_tool_outputs("custom_poi_range_ring")
                     add_tool_output("custom_poi_range_ring", output)
+                    bump_tool_viz_version("custom_poi_range_ring")
                     st.rerun()
                     
                 except Exception as e:
@@ -287,22 +307,15 @@ def render_custom_poi_tool() -> None:
         if tool_state.get("outputs"):
             output = tool_state["outputs"][-1]
             
-            st.success("POI rings generated!")
-            st.subheader(output.title)
-            st.caption(output.subtitle)
-            
-            deck = render_range_ring_output(output, get_map_style())
-            render_map_with_legend(deck, output)
-            
-            if is_analyst_mode():
-                with st.expander("📊 Technical Metadata"):
-                    st.json({
-                        "output_id": str(output.output_id),
-                        "processing_time_ms": output.metadata.processing_time_ms if output.metadata else None,
-                        "poi_count": output.metadata.point_count if output.metadata else None,
-                    })
-            
-            render_export_controls(output, "custom_poi_range_ring")
+            render_output_panel(
+                output,
+                tool_key="custom_poi_range_ring",
+                map_style=get_map_style(),
+                extra_metadata={
+                    "processing_time_ms": getattr(output.metadata, "processing_time_ms", None),
+                    "poi_count": getattr(output.metadata, "point_count", None),
+                },
+            )
 
 
 __all__ = ["render_custom_poi_tool"]

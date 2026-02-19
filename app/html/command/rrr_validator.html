@@ -313,6 +313,14 @@
 
             const lower = text.toLowerCase().trim();
 
+            if (lower.includes('trajectory') || lower.includes('flight path') || lower.includes('launch path')) {
+                ['rrr-verb', 'rrr-type', 'rrr-from', 'rrr-country', 'rrr-target', 'rrr-city'].forEach(id => {
+                    setStatus(id, null, '—');
+                });
+                if (hint) hint.textContent = 'This looks like a Launch Trajectory command. See Launch Trajectory tab.';
+                return;
+            }
+
             if (lower.includes('minimum') || lower.includes('min distance') || lower.includes('minimum distance')) {
                 ['rrr-verb', 'rrr-type', 'rrr-from', 'rrr-country', 'rrr-target', 'rrr-city'].forEach(id => {
                     setStatus(id, null, '—');
@@ -346,9 +354,14 @@
             setStatus('rrr-type', typeMatch ? 'exact' : false, typeMatch || '—', typeMatch);
 
             // From preposition validation
+            // Match preposition with space after OR at end of string (for progressive typing)
             let fromMatch = validFromPreps.find(p => {
                 const typeEnd = typeMatch ? lower.indexOf(typeMatch) + typeMatch.length : 0;
-                return lower.indexOf(' ' + p + ' ', typeEnd) >= 0;
+                const afterType = lower.substring(typeEnd);
+                // Match " prep " or " prep" at end of string
+                const prepWithSpaces = ' ' + p + ' ';
+                const prepAtEnd = ' ' + p;
+                return afterType.indexOf(prepWithSpaces) >= 0 || afterType.endsWith(prepAtEnd);
             });
             setStatus('rrr-from', fromMatch ? 'exact' : false, fromMatch || '—', fromMatch);
 
@@ -356,18 +369,40 @@
             let city = null;
             let targetPrep = null;
 
+            let afterFrom = '';
             if (fromMatch && typeMatch) {
                 const fromIdx = lower.indexOf(' ' + fromMatch + ' ');
                 if (fromIdx >= 0) {
-                    const afterFrom = lower.substring(fromIdx + fromMatch.length + 2);
+                    // Don't trim yet - we need trailing spaces for progressive matching
+                    afterFrom = lower.substring(fromIdx + fromMatch.length + 2);
                     for (const tp of validTargetPreps) {
-                        const tpIdx = afterFrom.indexOf(' ' + tp + ' ');
+                        // Match " prep " with content after, or " prep" at/near end (for progressive typing)
+                        const tpWithSpaces = ' ' + tp + ' ';
+                        const tpIdx = afterFrom.indexOf(tpWithSpaces);
+                        
+                        // Also check if target prep is at end (with optional trailing whitespace)
+                        const afterFromTrimmed = afterFrom.trimEnd();
+                        const tpAtEnd = ' ' + tp;
+                        const endsWithPrep = afterFromTrimmed.endsWith(tpAtEnd);
+                        const tpEndIdx = endsWithPrep ? afterFromTrimmed.lastIndexOf(tpAtEnd) : -1;
+                        
                         if (tpIdx >= 0) {
                             targetPrep = tp;
                             country = afterFrom.substring(0, tpIdx).trim();
                             city = afterFrom.substring(tpIdx + tp.length + 2).trim().replace(/\.$/, '');
                             break;
+                        } else if (tpEndIdx >= 0) {
+                            // Target prep at end of string (no city yet)
+                            targetPrep = tp;
+                            country = afterFromTrimmed.substring(0, tpEndIdx).trim();
+                            city = '';
+                            break;
                         }
+                    }
+                    // If no target preposition yet, still surface the country portion so users
+                    // get progressive feedback (country match) before typing the city.
+                    if (!targetPrep && afterFrom.trim()) {
+                        country = afterFrom.replace(/\.$/, '').trim();
                     }
                 }
             }
@@ -390,10 +425,12 @@
             setStatus('rrr-country', countryStatus, country || '—', countryMatch);
 
             // Target prep validation
-            setStatus('rrr-target', targetPrep ? 'exact' : false, targetPrep || '—', targetPrep);
+            // If no target preposition yet, keep it pending (not an error) so users see progressive checks.
+            const targetStatus = targetPrep ? 'exact' : (afterFrom ? null : false);
+            setStatus('rrr-target', targetStatus, targetPrep || '—', targetPrep);
 
             // City validation: exact vs fuzzy vs no match
-            let cityStatus = false;
+            let cityStatus = city ? false : null;
             let cityMatch = null;
             if (city) {
                 const cityLower = city.toLowerCase();

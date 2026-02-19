@@ -260,3 +260,6 @@ docker-compose.override.yml
 
 # ArcGis
 *.mxd
+
+# Git Summary
+git_commit_summary.py

@@ -17,13 +17,12 @@ from app.models.inputs import (
     PointOfInterest,
     ReverseRangeRingInput,
 )
-from app.rendering.pydeck_adapter import render_range_ring_output
 from app.ui.layout.global_state import (
-    is_analyst_mode,
     get_map_style,
     add_tool_output,
     get_tool_state,
     clear_tool_outputs,
+    bump_tool_viz_version,
 )
 from app.ui.tools.reverse.state import (
     get_reverse_available_systems,
@@ -32,10 +31,11 @@ from app.ui.tools.reverse.state import (
     set_reverse_min_distance,
     is_reverse_calculated,
     set_reverse_calculated,
+    reset_reverse_range_ring_state,
 )
 from app.ui.tools.shared import (
-    render_map_with_legend,
-    render_export_controls,
+    render_output_panel,
+    build_progress_callback,
 )
 
 
@@ -153,13 +153,8 @@ def render_reverse_range_ring_tool() -> None:
                 resolution = st.selectbox("Resolution", options=["low", "normal", "high"], index=1, key="reverse_resolution")
                 
                 if st.button("🚀 Generate Launch Envelope", key="reverse_generate"):
-                    # Create progress bar - updates come from the service
-                    progress_bar = st.progress(0, text="0% - Initializing...")
-                    
-                    def update_progress(pct: float, status: str):
-                        """Callback to update progress bar from generate_reverse_range_ring."""
-                        progress_bar.progress(min(pct, 1.0), text=f"{int(pct * 100)}% - {status}")
-                    
+                    progress_bar, update_progress = build_progress_callback("Initializing...")
+
                     try:
                         target = PointOfInterest(name=city_name, latitude=target_lat, longitude=target_lon)
                         input_data = ReverseRangeRingInput(
@@ -171,10 +166,10 @@ def render_reverse_range_ring_tool() -> None:
                         )
                         # Attach weapon source for export attribution when present
                         setattr(input_data, "weapon_source", selected_weapon_source)
-                        
+
                         # Get shooter country geometry for intersection
                         shooter_geometry = data_service.get_country_geometry(shooter_country_code)
-                        
+
                         # Generate with progress callback - all updates come from the service
                         output = generate_reverse_range_ring(
                             input_data, 
@@ -182,15 +177,16 @@ def render_reverse_range_ring_tool() -> None:
                             threat_country_name=shooter_country_name,
                             progress_callback=update_progress
                         )
-                        
+
                         # Clear previous outputs and add new one
                         clear_tool_outputs("reverse_range_ring")
                         add_tool_output("reverse_range_ring", output)
-                        
+                        bump_tool_viz_version("reverse_range_ring")
+
                         # Complete progress and rerun to render from session state
                         progress_bar.progress(1.0, text="100% - Complete!")
                         st.rerun()
-                        
+
                     except Exception as e:
                         progress_bar.progress(1.0, text="Error!")
                         st.error(f"Error generating range ring: {e}")
@@ -201,27 +197,39 @@ def render_reverse_range_ring_tool() -> None:
                     output = tool_state["outputs"][-1]  # Get latest output
                     
                     st.success("Launch envelope generated!")
-                    
-                    st.subheader(output.title)
-                    st.caption(output.subtitle)
-                    st.markdown(f"*{output.description}*")
-                    
-                    deck = render_range_ring_output(output, get_map_style())
-                    render_map_with_legend(deck, output)
-                    
-                    # Analyst mode metadata
-                    if is_analyst_mode():
-                        with st.expander("📊 Technical Metadata"):
-                            st.json({
-                                "output_id": str(output.output_id),
-                                "vertex_count": output.metadata.vertex_count if output.metadata else None,
-                                "processing_time_ms": output.metadata.processing_time_ms if output.metadata else None,
-                                "range_km": output.metadata.range_km if output.metadata else None,
-                            })
-                    
-                    render_export_controls(output, "reverse_range_ring")
+
+                    render_output_panel(
+                        output,
+                        tool_key="reverse_range_ring",
+                        map_style=get_map_style(),
+                        extra_metadata={
+                            "vertex_count": getattr(output.metadata, "vertex_count", None),
+                            "processing_time_ms": getattr(output.metadata, "processing_time_ms", None),
+                            "range_km": getattr(output.metadata, "range_km", None),
+                            "weapon_source": getattr(output.metadata, "weapon_source", None),
+                        },
+                    )
         else:
             st.info("👆 Select a target city and shooter country, then click **Calculate Availability** to see which systems can reach the target.")
+
+        # Utility control for resetting the tool UI + visualization back to the initial state
+        if st.button("🔄 Reset Tool", key="reverse_reset_tool", use_container_width=True):
+            # Clear persisted computation + outputs
+            reset_reverse_range_ring_state()
+            bump_tool_viz_version("reverse_range_ring")
+
+            # Clear Streamlit widget state so selectboxes return to defaults
+            widget_keys = [
+                "reverse_city",
+                "reverse_shooter_country",
+                "reverse_selected_system",
+                "reverse_resolution",
+            ]
+            for k in widget_keys:
+                if k in st.session_state:
+                    del st.session_state[k]
+
+            st.rerun()
 
 
 __all__ = ["render_reverse_range_ring_tool"]

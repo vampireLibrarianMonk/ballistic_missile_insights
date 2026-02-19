@@ -1,0 +1,285 @@
+<style>
+    .traj-validator {
+        font-family: "Source Sans Pro", sans-serif;
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 12px;
+        margin: 10px 0;
+    }
+    .traj-validator-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 8px;
+    }
+    .traj-section {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 13px;
+    }
+    .traj-icon {
+        width: 18px;
+        height: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+    }
+    .traj-valid { color: #28a745; }
+    .traj-invalid { color: #dc3545; }
+    .traj-warning { color: #ffc107; }
+    .traj-pending { color: #6c757d; }
+    .traj-label {
+        color: #555;
+        min-width: 120px;
+    }
+    .traj-value {
+        color: #333;
+        font-weight: 500;
+    }
+    .traj-match {
+        color: #28a745;
+        font-size: 11px;
+        margin-left: 4px;
+    }
+    .traj-hint {
+        font-size: 11px;
+        color: #888;
+        font-style: italic;
+        margin-top: 8px;
+    }
+    .traj-lookup-section {
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px solid #e0e0e0;
+    }
+    .traj-lookup-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: #555;
+        margin-bottom: 8px;
+    }
+    .traj-lookup-row {
+        display: flex;
+        gap: 12px;
+    }
+    .traj-lookup-col {
+        flex: 1;
+    }
+    .traj-lookup-label {
+        font-size: 11px;
+        color: #666;
+        margin-bottom: 4px;
+    }
+    .traj-search-input {
+        width: 100%;
+        padding: 6px 8px;
+        font-size: 12px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        box-sizing: border-box;
+    }
+    .traj-search-input:focus {
+        outline: none;
+        border-color: #ff4b4b;
+    }
+    .traj-suggestions {
+        max-height: 150px;
+        overflow-y: auto;
+        overflow-x: hidden;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: white;
+        margin-top: 4px;
+        display: none;
+        scrollbar-width: thin;
+        scrollbar-color: #888 #f0f0f0;
+    }
+    .traj-suggestions.active { display: block; }
+    .traj-suggestion {
+        padding: 6px 8px;
+        font-size: 11px;
+        cursor: pointer;
+        border-bottom: 1px solid #eee;
+    }
+    .traj-suggestion:last-child { border-bottom: none; }
+    .traj-suggestion:hover { background: #f0f2f6; }
+    .traj-no-results {
+        padding: 6px 8px;
+        font-size: 11px;
+        color: #888;
+        font-style: italic;
+    }
+</style>
+
+<div class="traj-validator" id="traj-validator-widget">
+    <div class="traj-validator-title">📋 Query Validator</div>
+    <div class="traj-section" id="traj-verb">
+        <span class="traj-icon traj-pending" id="traj-verb-icon">○</span>
+        <span class="traj-label">Action:</span>
+        <span class="traj-value" id="traj-verb-value">—</span>
+    </div>
+    <div class="traj-section" id="traj-type">
+        <span class="traj-icon traj-pending" id="traj-type-icon">○</span>
+        <span class="traj-label">Task Type:</span>
+        <span class="traj-value" id="traj-type-value">—</span>
+    </div>
+    <div class="traj-section" id="traj-from">
+        <span class="traj-icon traj-pending" id="traj-from-icon">○</span>
+        <span class="traj-label">From:</span>
+        <span class="traj-value" id="traj-from-value">—</span>
+    </div>
+    <div class="traj-section" id="traj-origin">
+        <span class="traj-icon traj-pending" id="traj-origin-icon">○</span>
+        <span class="traj-label">Origin:</span>
+        <span class="traj-value" id="traj-origin-value">—</span>
+    </div>
+    <div class="traj-section" id="traj-to">
+        <span class="traj-icon traj-pending" id="traj-to-icon">○</span>
+        <span class="traj-label">To:</span>
+        <span class="traj-value" id="traj-to-value">—</span>
+    </div>
+    <div class="traj-section" id="traj-destination">
+        <span class="traj-icon traj-pending" id="traj-destination-icon">○</span>
+        <span class="traj-label">Destination:</span>
+        <span class="traj-value" id="traj-destination-value">—</span>
+    </div>
+    <div class="traj-hint" id="traj-hint">Type your command above to see validation...</div>
+
+    <div class="traj-lookup-section">
+        <div class="traj-lookup-title">🔍 Location Lookup (countries + cities)</div>
+        <div class="traj-lookup-row">
+            <div class="traj-lookup-col">
+                <div class="traj-lookup-label">Origin Search:</div>
+                <input type="text" class="traj-search-input" id="traj-origin-search" placeholder="Type to search..." autocomplete="off">
+                <div class="traj-suggestions" id="traj-origin-suggestions"></div>
+            </div>
+            <div class="traj-lookup-col">
+                <div class="traj-lookup-label">Destination Search:</div>
+                <input type="text" class="traj-search-input" id="traj-destination-search" placeholder="Type to search..." autocomplete="off">
+                <div class="traj-suggestions" id="traj-destination-suggestions"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function() {
+        {{SHARED_JS}}
+        const V = ORRG_VALIDATION;
+        const M = V.messages;
+
+        function setStatus(id, valid, value, matched) {
+            const icon = document.getElementById(id + '-icon');
+            const valueEl = document.getElementById(id + '-value');
+            if (!icon || !valueEl) return;
+
+            if (valid === 'exact') {
+                icon.textContent = '✓';
+                icon.className = 'traj-icon traj-valid';
+            } else if (valid === 'fuzzy') {
+                icon.textContent = '⚠';
+                icon.className = 'traj-icon traj-warning';
+            } else if (valid === false) {
+                icon.textContent = '✗';
+                icon.className = 'traj-icon traj-invalid';
+            } else {
+                icon.textContent = '○';
+                icon.className = 'traj-icon traj-pending';
+            }
+
+            if (value && matched && matched !== value.toLowerCase()) {
+                valueEl.innerHTML = value + '<span class="traj-match"> (use: ' + matched + ')</span>';
+            } else {
+                valueEl.textContent = value || '—';
+            }
+        }
+
+        function parseAndValidate(text) {
+            const hint = document.getElementById('traj-hint');
+            const fields = ['traj-verb','traj-type','traj-from','traj-origin','traj-to','traj-destination'];
+
+            if (!text || text.trim().length < 3) {
+                fields.forEach(id => setStatus(id, null, '—'));
+                if (hint) hint.textContent = M.validatorPending;
+                return;
+            }
+
+            const lower = text.toLowerCase().trim();
+            const cmdType = V.detectCommandType(lower);
+
+            // Redirect if user is actually typing a different tool command
+            if (cmdType.hasReverse) {
+                fields.forEach(id => setStatus(id, null, '—'));
+                if (hint) hint.textContent = M.reverseRedirect;
+                return;
+            }
+            if (cmdType.hasSingle) {
+                fields.forEach(id => setStatus(id, null, '—'));
+                if (hint) hint.textContent = M.singleRedirect;
+                return;
+            }
+            if (cmdType.hasMultiple) {
+                fields.forEach(id => setStatus(id, null, '—'));
+                if (hint) hint.textContent = M.multipleRedirect;
+                return;
+            }
+            if (cmdType.hasMinimum) {
+                fields.forEach(id => setStatus(id, null, '—'));
+                if (hint) hint.textContent = M.minimumRedirect;
+                return;
+            }
+            if (cmdType.hasCustomPoi) {
+                fields.forEach(id => setStatus(id, null, '—'));
+                if (hint) hint.textContent = M.customPoiRedirect;
+                return;
+            }
+
+            const result = V.validateTrajectory(lower);
+
+            // Verb
+            setStatus('traj-verb', result.verbMatch ? 'exact' : false, result.verbMatch || (lower.split(' ')[0] || ''), result.verbMatch);
+            // Type
+            setStatus('traj-type', result.typeMatch ? 'exact' : false, result.typeMatch || '—', result.typeMatch);
+            // From
+            setStatus('traj-from', result.fromMatch ? 'exact' : false, result.fromMatch || '—', result.fromMatch);
+            // Origin (allow pending while typing)
+            setStatus('traj-origin', result.originStatus, result.origin || '—', result.originMatch);
+            // To (pending if user hasn't typed yet)
+            setStatus('traj-to', result.toMatch ? 'exact' : (result.origin ? null : false), result.toMatch || '—', result.toMatch);
+            // Destination
+            setStatus('traj-destination', result.destinationStatus, result.destination || '—', result.destinationMatch);
+
+            if (result.allExact) {
+                if (hint) hint.textContent = M.validatorValid;
+            } else if (result.allValid && result.hasFuzzy) {
+                if (hint) hint.textContent = M.validatorFuzzy;
+            } else if (result.partialValid) {
+                if (hint) hint.textContent = M.validatorAttention;
+            } else {
+                if (hint) hint.textContent = 'Format: Show launch trajectory from [Origin] to [Destination]';
+            }
+        }
+
+        // Setup lookup (use shared helper)
+        const locationsDisplay = Array.from(new Set([...(V.countriesDisplay || []), ...(V.citiesDisplay || [])])).sort();
+        V.setupLookup('traj-origin-search', 'traj-origin-suggestions', locationsDisplay, 'traj-suggestion');
+        V.setupLookup('traj-destination-search', 'traj-destination-suggestions', locationsDisplay, 'traj-suggestion');
+
+        // Attach to main textarea
+        let attached = V.attachTextareaListener(parseAndValidate);
+        if (!attached) {
+            let attempts = 0;
+            const maxAttempts = 30;
+            const tryAttach = setInterval(function() {
+                attempts++;
+                if (V.attachTextareaListener(parseAndValidate) || attempts >= maxAttempts) {
+                    clearInterval(tryAttach);
+                }
+            }, 200);
+        }
+    })();
+</script>

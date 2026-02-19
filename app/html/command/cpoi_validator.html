@@ -1,0 +1,248 @@
+<style>
+    .cpoi-validator {
+        font-family: "Source Sans Pro", sans-serif;
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 12px;
+        margin: 10px 0;
+    }
+    .cpoi-validator-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 8px;
+    }
+    .cpoi-section {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 13px;
+    }
+    .cpoi-icon {
+        width: 18px;
+        height: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+    }
+    .cpoi-valid { color: #28a745; }
+    .cpoi-invalid { color: #dc3545; }
+    .cpoi-warning { color: #ffc107; }
+    .cpoi-pending { color: #6c757d; }
+    .cpoi-label {
+        color: #555;
+        min-width: 140px;
+    }
+    .cpoi-value {
+        color: #333;
+        font-weight: 500;
+    }
+    .cpoi-match {
+        color: #28a745;
+        font-size: 11px;
+        margin-left: 4px;
+    }
+    .cpoi-hint {
+        font-size: 11px;
+        color: #888;
+        font-style: italic;
+        margin-top: 8px;
+    }
+    .cpoi-sublist {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        font-size: 12px;
+        color: #333;
+    }
+    .cpoi-subitem {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+    }
+    .cpoi-badge {
+        display: inline-block;
+        background: #eef2ff;
+        color: #3949ab;
+        border-radius: 4px;
+        padding: 2px 6px;
+        font-size: 11px;
+        border: 1px solid #d5dcff;
+    }
+</style>
+<div class="cpoi-validator" id="cpoi-validator-widget">
+    <div class="cpoi-validator-title" id="cpoi-title">📍 Custom POI Validator</div>
+    <div class="cpoi-section" id="cpoi-verb">
+        <span class="cpoi-icon cpoi-pending" id="cpoi-verb-icon">○</span>
+        <span class="cpoi-label">Action:</span>
+        <span class="cpoi-value" id="cpoi-verb-value">—</span>
+    </div>
+    <div class="cpoi-section" id="cpoi-type">
+        <span class="cpoi-icon cpoi-pending" id="cpoi-type-icon">○</span>
+        <span class="cpoi-label">Command Type:</span>
+        <span class="cpoi-value" id="cpoi-type-value">—</span>
+    </div>
+    <div class="cpoi-section" id="cpoi-pois">
+        <span class="cpoi-icon cpoi-pending" id="cpoi-pois-icon">○</span>
+        <span class="cpoi-label">POIs Parsed:</span>
+        <span class="cpoi-value" id="cpoi-pois-value">—</span>
+    </div>
+    <div class="cpoi-section" id="cpoi-latlon">
+        <span class="cpoi-icon cpoi-pending" id="cpoi-latlon-icon">○</span>
+        <span class="cpoi-label">Lat / Lon:</span>
+        <span class="cpoi-value" id="cpoi-latlon-value">—</span>
+    </div>
+    <div class="cpoi-section" id="cpoi-ranges">
+        <span class="cpoi-icon cpoi-pending" id="cpoi-ranges-icon">○</span>
+        <span class="cpoi-label">Min / Max Range:</span>
+        <span class="cpoi-value" id="cpoi-ranges-value">—</span>
+    </div>
+    <div class="cpoi-section" id="cpoi-unit">
+        <span class="cpoi-icon cpoi-pending" id="cpoi-unit-icon">○</span>
+        <span class="cpoi-label">Unit:</span>
+        <span class="cpoi-value" id="cpoi-unit-value">—</span>
+    </div>
+    <div class="cpoi-hint" id="cpoi-hint">Type a custom POI command to see validation. Example: "Custom POIs: [Tehran 35.6762 51.4241 300-1200 km]; [Isfahan 32.6539 51.6660 0-800 mi]"</div>
+</div>
+
+<script>
+    (function() {
+        // Shared validation
+        {{SHARED_JS}}
+        const V = ORRG_VALIDATION;
+        const M = V.messages;
+
+        function setStatus(id, valid, value, matched) {
+            const icon = document.getElementById(id + '-icon');
+            const valueEl = document.getElementById(id + '-value');
+            if (!icon || !valueEl) return;
+
+            if (valid === 'exact') {
+                icon.textContent = '✓';
+                icon.className = 'cpoi-icon cpoi-valid';
+            } else if (valid === 'fuzzy') {
+                icon.textContent = '⚠';
+                icon.className = 'cpoi-icon cpoi-warning';
+            } else if (valid === false) {
+                icon.textContent = '✗';
+                icon.className = 'cpoi-icon cpoi-invalid';
+            } else {
+                icon.textContent = '○';
+                icon.className = 'cpoi-icon cpoi-pending';
+            }
+
+            if (value && matched && matched !== value.toLowerCase()) {
+                valueEl.innerHTML = value + '<span class="cpoi-match"> (use: ' + matched + ')</span>';
+            } else {
+                valueEl.textContent = value || '—';
+            }
+        }
+
+        function summarizePois(poiResults) {
+            if (!poiResults || !poiResults.length) return '—';
+            const container = document.createElement('div');
+            container.className = 'cpoi-sublist';
+            poiResults.forEach((p, idx) => {
+                const row = document.createElement('div');
+                row.className = 'cpoi-subitem';
+                const badge = document.createElement('span');
+                badge.className = 'cpoi-badge';
+                badge.textContent = `POI ${idx + 1}`;
+                const text = document.createElement('span');
+                const statusEmoji = p.status === 'exact' ? '✓' : (p.status === 'fuzzy' ? '⚠' : '✗');
+                text.textContent = `${statusEmoji} ${p.name || '—'} | ${p.lat ?? '?'} , ${p.lon ?? '?'} | ${p.minRange ?? 0}-${p.maxRange ?? '?'} ${p.unit || ''}`;
+                row.appendChild(badge);
+                row.appendChild(text);
+                container.appendChild(row);
+            });
+            return container.outerHTML;
+        }
+
+        function parseAndValidate(text) {
+            const hint = document.getElementById('cpoi-hint');
+            const fields = ['cpoi-verb','cpoi-type','cpoi-pois','cpoi-latlon','cpoi-ranges','cpoi-unit'];
+            if (!text || text.trim().length < 3) {
+                fields.forEach(id => setStatus(id, null, '—'));
+                if (hint) hint.textContent = 'Type a custom POI command to see validation.';
+                return;
+            }
+
+            const lower = text.toLowerCase().trim();
+            const cmdType = V.detectCommandType(lower);
+            const loosePoiCues = /\b(lat|lon|poi|point of interest|range|km|mi)\b/;
+            const isCustom = cmdType.hasCustomPoi || loosePoiCues.test(lower);
+
+            if (cmdType.hasTrajectory) {
+                fields.forEach(id => setStatus(id, null, '—'));
+                if (hint) hint.textContent = M.trajectoryRedirect;
+                return;
+            }
+
+            if (!isCustom) {
+                fields.forEach(id => setStatus(id, null, '—'));
+                if (hint) hint.textContent = M.customPoiRedirect;
+                return;
+            }
+
+            const result = V.validateCustomPoi(lower);
+
+            // Title reflects single vs multiple
+            const titleEl = document.getElementById('cpoi-title');
+            if (titleEl) {
+                const modeLabel = result.mode || 'Single';
+                titleEl.textContent = `📍 Custom POI Validator — ${modeLabel}`;
+            }
+
+            // Action / type
+            const verb = V.validVerbs.find(v => lower.startsWith(v)) || (lower.split(' ')[0] || '—');
+            setStatus('cpoi-verb', verb ? 'exact' : false, verb, verb);
+            setStatus('cpoi-type', result.typeMatch ? 'exact' : false, result.typeMatch || 'Custom POI', result.typeMatch);
+
+            // POIs summary
+            const poisValid = result.allExact ? 'exact' : (result.allValid ? 'fuzzy' : (result.partialValid ? false : null));
+            const poiSummary = summarizePois(result.poiResults);
+            const poiValEl = document.getElementById('cpoi-pois-value');
+            setStatus('cpoi-pois', poisValid, `${result.poiResults.length || 0} found`, null);
+            if (poiValEl && poiSummary) poiValEl.innerHTML = poiSummary;
+
+            // Aggregate lat/lon and ranges status
+            const hasErrors = result.poiResults.some(p => p.status === 'error');
+            const hasFuzzy = result.poiResults.some(p => p.status === 'fuzzy');
+            const latlonStatus = hasErrors ? 'error' : (hasFuzzy ? 'fuzzy' : (result.poiResults.length ? 'exact' : null));
+            const rangesStatus = latlonStatus;
+            setStatus('cpoi-latlon', latlonStatus, result.poiResults.length ? 'Parsed' : '—', null);
+            setStatus('cpoi-ranges', rangesStatus, result.poiResults.length ? 'Parsed' : '—', null);
+
+            // Unit status
+            const allUnitsValid = result.poiResults.every(p => p.unit && V.validCustomPoiUnits.includes(p.unit));
+            const unitStatus = hasErrors ? 'error' : (allUnitsValid ? 'exact' : 'fuzzy');
+            setStatus('cpoi-unit', unitStatus, allUnitsValid ? 'km/mi' : 'Check units', null);
+
+            if (result.allExact) {
+                if (hint) hint.textContent = '✅ Custom POI looks valid! Click Execute to proceed.';
+            } else if (result.allValid && result.hasFuzzy) {
+                if (hint) hint.textContent = '⚠️ Check highlighted POIs (large ranges).';
+            } else if (result.partialValid) {
+                if (hint) hint.textContent = '⚠️ Some POIs need fixes (lat/lon/range/unit).';
+            } else {
+                if (hint) hint.textContent = 'Enter custom POI: [Name lat lon min-max unit]; separate POIs with semicolons or brackets.';
+            }
+        }
+
+        // Attach to main textarea using shared helper for consistency
+        let attached = V.attachTextareaListener(parseAndValidate);
+        if (!attached) {
+            let attempts = 0;
+            const maxAttempts = 30;
+            const tryAttach = setInterval(function() {
+                attempts++;
+                if (V.attachTextareaListener(parseAndValidate) || attempts >= maxAttempts) {
+                    clearInterval(tryAttach);
+                }
+            }, 200);
+        }
+    })();
+</script>

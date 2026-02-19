@@ -6,11 +6,10 @@ Provides loading and caching of countries, cities, and weapon systems data.
 import json
 from pathlib import Path
 from typing import Any, Optional
-from functools import lru_cache
 
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import shape
+import geonamescache
 from shapely.geometry.base import BaseGeometry
 
 from app.models.inputs import RangeClassification
@@ -74,17 +73,26 @@ class DataService:
         return self._countries_gdf
     
     def load_cities(self) -> pd.DataFrame:
-        """Load cities database."""
+        """Load cities database.
+
+        Cities are sourced from the `geonamescache` package (GeoNames dataset) rather than
+        a committed CSV file.
+        """
         if self._cities_df is not None:
             return self._cities_df
-        
-        cities_file = DATA_DIR / "cities" / "cities.csv"
-        
-        if cities_file.exists():
-            self._cities_df = pd.read_csv(cities_file)
-        else:
-            # Create sample data for testing
-            self._cities_df = _create_sample_cities()
+
+        # Build DataFrame from GeoNames cache
+        # geonamescache.get_cities() returns a dict keyed by geonameid, with values like:
+        # { name, latitude, longitude, countrycode, population, ... }
+        gc = geonamescache.GeonamesCache()
+        cities_dict = gc.get_cities()
+        cities_rows = list(cities_dict.values())
+        self._cities_df = pd.DataFrame(cities_rows)
+
+        # Normalize columns to match the expectations of the rest of the codebase
+        # (historically we supported a `country_code` column).
+        if "countrycode" in self._cities_df.columns and "country_code" not in self._cities_df.columns:
+            self._cities_df = self._cities_df.rename(columns={"countrycode": "country_code"})
         
         return self._cities_df
     

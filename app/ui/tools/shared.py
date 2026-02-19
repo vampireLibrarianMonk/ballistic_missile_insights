@@ -10,7 +10,8 @@ from __future__ import annotations
 import streamlit as st
 from typing import Optional
 
-from app.ui.layout.global_state import is_analyst_mode
+from app.ui.layout.global_state import is_analyst_mode, get_tool_viz_version
+from app.rendering.pydeck_adapter import render_range_ring_output
 from app.models.outputs import GeometryType
 
 
@@ -379,4 +380,66 @@ __all__ = [
     "render_range_input_with_weapon_key",
     "render_map_with_legend",
     "render_export_controls",
+    "render_output_panel",
+    "build_progress_callback",
 ]
+
+
+# =============================================================================
+# Shared Output / Progress Helpers
+# =============================================================================
+def build_progress_callback(label: str = "Initializing..."):
+    """
+    Create a Streamlit progress bar and return (bar, callback).
+
+    Callback signature matches existing services: (pct: float, status: str).
+    """
+    progress_bar = st.progress(0.0, text=label)
+
+    def update_progress(pct: float, status: str):
+        progress_bar.progress(min(pct, 1.0), text=f"{int(min(pct,1.0)*100)}% - {status}")
+
+    return progress_bar, update_progress
+
+
+def render_output_panel(
+    output,
+    tool_key: str,
+    map_style,
+    show_metadata: bool = True,
+    extra_metadata: dict | None = None,
+    classification: str = "UNCLASSIFIED",
+):
+    """
+    Standardized rendering for tool outputs: title/subtitle, map+legend, metadata, exports.
+    """
+    st.success("Output ready!")
+
+    st.subheader(output.title)
+    if getattr(output, "subtitle", None):
+        st.caption(output.subtitle)
+    if getattr(output, "description", None):
+        st.markdown(f"*{output.description}*")
+
+    deck = render_range_ring_output(output, map_style)
+    # Include a per-tool viz version to force a hard re-render when requested.
+    # This helps implement "Reset visualization" behavior even when client-side
+    # state (zoom/pan) is retained by the embedded component.
+    viz_version = get_tool_viz_version(tool_key)
+    render_map_with_legend(deck, output, height=500 + (viz_version % 2))
+
+    if show_metadata and is_analyst_mode():
+        metadata = {
+            "output_id": str(output.output_id),
+            "vertex_count": getattr(output.metadata, "vertex_count", None),
+            "processing_time_ms": getattr(output.metadata, "processing_time_ms", None),
+            "range_km": getattr(output.metadata, "range_km", None),
+            "range_classification": getattr(output.metadata, "range_classification", None),
+        }
+        if extra_metadata:
+            metadata.update(extra_metadata)
+
+        with st.expander("📊 Technical Metadata"):
+            st.json(metadata)
+
+    render_export_controls(output, tool_key)
